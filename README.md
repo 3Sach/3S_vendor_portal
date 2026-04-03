@@ -21,7 +21,7 @@ An independent bilingual (Vietnamese + English) web portal serving two types of 
 | Account provisioning | Auto from Odoo partners where `supplier_rank > 0` |
 | Portal language | Vietnamese + English (bilingual, user-switchable) |
 | HTTP client (frontend) | Native `fetch` API — no axios or third-party HTTP lib |
-| PO statuses visible | Confirmed (`purchase`) and Done (`done`) only |
+| PO statuses visible | Sent RFQ (`sent`), Confirmed (`purchase`), Cancelled (`cancel`), Done (`done`) — Draft (`draft`) is not shown |
 | Receipt statuses visible | Ready (`assigned`) and Done (`done`) only |
 | qty_done updates | Multiple updates allowed before validation |
 | Backorder handling | Vendor submits qty only — admin validates and decides in Odoo |
@@ -40,7 +40,8 @@ An independent bilingual (Vietnamese + English) web portal serving two types of 
 | Profile changes | All profile changes must go through Odoo — admin cannot edit in portal |
 | Admin language | Bilingual (Vietnamese + English) — same as vendor portal |
 | SSL / TLS | Handled at infrastructure level (load balancer / reverse proxy) |
-| Audit logging | Key actions logged in DB: login, qty update, sign, unlock |
+| Vendor PO confirmation | Vendor confirms Sent RFQ via portal → portal calls `button_confirm` on `purchase.order` in Odoo |
+| Audit logging | Key actions logged in DB: login, po_confirm, qty update, sign, unlock |
 | Email notifications | Invite, password reset, validation confirmation (vendor), validation alert (internal team) |
 | Email service | AWS SES |
 | Frontend stack | React + Vite |
@@ -136,10 +137,19 @@ This section describes the portal's behaviour in plain business terms, intended 
 **Who can see what:** Each vendor sees only their own Purchase Orders. It is technically impossible for a vendor to view another vendor's data.
 
 **Which POs are visible:**
-- **Confirmed** — PO has been approved and sent to the vendor
+- **Sent RFQ** — RFQ has been sent to the vendor and is awaiting confirmation. Vendor can confirm it directly in the portal.
+- **Confirmed** — PO has been approved and is active
+- **Cancelled** — PO has been cancelled (shown for vendor awareness, read-only)
 - **Done** — all receipts have been fully processed
 
-Draft RFQs and cancelled POs are not shown.
+Draft RFQs are not shown.
+
+**Confirming a Sent RFQ:**
+- A "Confirm PO" button is shown on Sent RFQ detail pages
+- Vendor clicks "Confirm PO" → portal calls `button_confirm` on `purchase.order` via XML-RPC using the service account
+- Odoo updates the PO state from `sent` to `purchase` and generates the linked Delivery Order / Receipt
+- The portal reflects the new `purchase` state immediately after the call succeeds
+- Once confirmed, the button is no longer shown — the record is now read-only on the PO level
 
 **Searching and filtering:**
 - Vendor can search by PO number (e.g. typing "PO004" filters the list instantly)
@@ -239,7 +249,7 @@ If quantities were entered incorrectly and the vendor needs to resubmit, a porta
 It is equally important for stakeholders to understand the boundaries of the portal:
 
 - **Does not validate stock movements** — all Odoo validation is done by the internal team
-- **Does not create or modify Purchase Orders** — vendors are read-only on PO data
+- **Does not create Purchase Orders** — vendors can confirm a Sent RFQ but cannot create, edit lines, or cancel a PO
 - **Does not handle invoicing or payments** — outside the scope of this portal
 - **Does not manage backorders** — the internal team decides on backorders in Odoo after reviewing vendor-submitted quantities
 - **Does not expose any Odoo credentials to vendors** — vendors have no access to Odoo, directly or indirectly
@@ -324,7 +334,7 @@ vendor-portal/
 | Model | Purpose | Key fields |
 |---|---|---|
 | `res.partner` | Vendor profile sync | `id`, `name`, `email`, `company_name`, `phone`, `supplier_rank` |
-| `purchase.order` | PO list and detail | `name`, `partner_id`, `state`, `date_order`, `amount_total`, `order_line`, `picking_ids` |
+| `purchase.order` | PO list, detail, and vendor confirmation | `name`, `partner_id`, `state`, `date_order`, `amount_total`, `order_line`, `picking_ids` — `button_confirm` called on vendor action |
 | `purchase.order.line` | PO line items | `product_id`, `name`, `product_qty`, `qty_received`, `price_unit` |
 | `stock.picking` | Receipt header | `name`, `state`, `scheduled_date`, `origin`, `move_line_ids` |
 | `stock.move.line` | Receipt line items | `product_id`, `product_uom_qty`, `qty_done`, `lot_id`, `state` |
@@ -335,7 +345,7 @@ vendor-portal/
 - Always specify explicit field lists in `search_read` — reading all fields on Odoo 16 can trigger serialization errors on computed fields like `tax_totals`
 
 ### Data filtering rules (applied at backend, not frontend)
-- POs: only `state IN ('purchase', 'done')` are returned
+- POs: only `state IN ('sent', 'purchase', 'cancel', 'done')` are returned — `draft` is excluded
 - Receipts: only `state IN ('assigned', 'done')` are returned
 - All queries are scoped by `partner_id` via VendorScopedOdooClient
 
@@ -455,6 +465,7 @@ The JWT access token carries a `role` field (`vendor` or `admin`). All admin-onl
 | PATCH | `/api/vendors/me/language` | Update preferred language (`vi` or `en`) |
 | GET | `/api/purchase-orders` | Paginated PO list, filterable by PO number and date range |
 | GET | `/api/purchase-orders/{id}` | PO detail with order lines |
+| POST | `/api/purchase-orders/{id}/confirm` | Confirm a Sent RFQ — calls `button_confirm` on Odoo; returns 409 if PO is not in `sent` state |
 | GET | `/api/receipts/{picking_id}` | Receipt detail with move lines and current `qty_done` |
 | PATCH | `/api/receipts/{picking_id}/lines` | Update `qty_done` on one or more move lines (blocked if locked) |
 | POST | `/api/receipts/{picking_id}/sign` | Submit signature PNG + optional comment, lock receipt, trigger emails, generate PDF |
@@ -503,6 +514,7 @@ Every key action is written to the `audit_log` table synchronously within the sa
 | Action | Trigger | Detail stored |
 |---|---|---|
 | `login` | Successful vendor or admin login | actor type, actor ID, IP address, timestamp |
+| `po_confirm` | `POST /purchase-orders/:id/confirm` | PO ID, PO name, previous state (`sent`), new state (`purchase`) |
 | `qty_update` | `PATCH /receipts/:id/lines` | picking ID, list of move line IDs with old and new `qty_done` values |
 | `sign` | `POST /receipts/:id/sign` | picking ID, vendor comment (if any), PDF path, signature path |
 | `unlock` | `POST /admin/receipts/:id/unlock` | picking ID, admin who unlocked, reason if provided |
@@ -747,3 +759,5 @@ All containers: `restart: unless-stopped`. Health check on backend container (`G
 14. **No axios** — all frontend HTTP calls use native `fetch` wrapped in a single `apiFetch` utility with automatic JWT refresh
 15. **i18n covers both vendor and admin UI** — all portal pages including admin section support Vietnamese and English; vendor-facing emails follow `preferred_language`; internal alert emails are always in English
 16. **TLS is upstream** — the portal Nginx does not manage certificates; ensure the upstream proxy passes `X-Forwarded-Proto` and `X-Real-IP` headers correctly to the FastAPI backend
+17. **`button_confirm` is a write action on Odoo** — unlike all other vendor-facing data calls which are read-only, PO confirmation calls `execute_kw` with `button_confirm` on `purchase.order`. The Odoo service account must have write permission on `purchase.order`. Verify this permission explicitly — read-only service accounts will silently fail or return an access error
+18. **Guard PO confirmation against double-submit** — the confirm endpoint must re-read the PO state from Odoo before calling `button_confirm`; if the state is already `purchase`, return 409 without calling Odoo again. The frontend must also disable the "Confirm PO" button immediately on click to prevent duplicate calls
