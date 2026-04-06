@@ -1,11 +1,17 @@
-# Vendor Portal — Project Roadmap v4
+# Vendor Portal - Specification Document
 > Specs & Approach Document — no implementation code
+
+| Tài liệu | Mục đích |
+|---|---|
+| **README.md** (file này) | Business logic, quy trình nghiệp vụ, và các quyết định thiết kế cấp cao |
+| [PROCESS_FLOW.md](PROCESS_FLOW.md) | Sơ đồ luồng chi tiết: RFQ → PO → DO → Giao hàng → Xác nhận, kèm swimlane và state machine |
+| [roadmap.md](roadmap.md) | Kế hoạch triển khai theo phase: DB schema, API endpoints, cấu hình hạ tầng, checklist go-live |
 
 ---
 
 ## Project Summary
 
-An independent bilingual (Vietnamese + English) web portal serving two types of users: **vendors** and **portal admins**. Vendors log in using their **email address**, confirm or reject Sent RFQs, edit Delivery Orders (quantities and delivery date), digitally sign and print DOs, and track delivery status through to store receipt confirmation. The portal also supports returns via Return Purchase Orders (RPO) and Goods Return Notes. Vendors can export data as PDF or CSV for invoicing and reconciliation. Portal admins share the same interface but have additional access to view all vendors, all POs and DOs across the system, trigger the Odoo sync manually, unlock signed DOs, and download any vendor's signed PDF. The portal runs on a separate VM from Odoo and integrates via Odoo's XML-RPC API using a dedicated service account. **Vendors only access the portal; stores only access Odoo.** All email is delivered via AWS SES.
+An independent bilingual (Vietnamese + English) web portal serving two types of users: **vendors** and **portal admins**. Vendors log in using their **Vendor ID** (`res.partner.id` from Odoo), confirm or reject Sent RFQs, edit Delivery Orders (quantities and delivery date), digitally sign and print DOs, and track delivery status through to store receipt confirmation. The portal also supports returns via Return Purchase Orders (RPO) and Goods Return Notes. Vendors can export data as PDF or CSV for invoicing and reconciliation. Portal admins share the same interface but have additional access to view all vendors, all POs and DOs across the system, trigger the Odoo sync manually, unlock signed DOs, and download any vendor's signed PDF. The portal runs on a separate VM from Odoo and integrates via Odoo's XML-RPC API using a dedicated service account. **Vendors only access the portal; stores only access Odoo.** All email is delivered via AWS SES.
 
 ---
 
@@ -15,9 +21,9 @@ An independent bilingual (Vietnamese + English) web portal serving two types of 
 |---|---|
 | Odoo version | 16 Community Edition |
 | Odoo API protocol | XML-RPC (Python `xmlrpc.client`) |
-| Vendor login identifier | Email address (managed on portal, NOT synced from Odoo) |
+| Vendor login identifier | `res.partner.id` (integer, assigned by Odoo — never changes) |
 | Vendor password | Portal-owned, stored in portal PostgreSQL only |
-| Profile data source | One-way sync from Odoo `res.partner` for profile fields (name, company, phone, tax ID). Email is managed on portal only — not synced from Odoo |
+| Profile data source | One-way sync from Odoo `res.partner` for profile fields (name, company, phone, tax ID). Email is copied from Odoo on initial account creation only (used to send the welcome email), then never overwritten by sync |
 | Account provisioning | Auto from Odoo partners where `supplier_rank > 0` |
 | Portal language | Vietnamese + English (bilingual, user-switchable) |
 | HTTP client (frontend) | Native `fetch` API — no axios or third-party HTTP lib |
@@ -31,7 +37,7 @@ An independent bilingual (Vietnamese + English) web portal serving two types of 
 | DO signing | Digital signature on portal locks the DO, pushes delivery date + set quantities to Odoo Receipt |
 | DO printing | After signing, vendor can print DO PDF (includes signature) multiple times |
 | DO PDF language | Vietnamese only — all printed DO PDFs use Vietnamese labels |
-| DO PDF content | PO number encoded as Code128 barcode (scannable by handheld), vendor info (ID, Tax ID, mobile, email), store ID (from `stock.warehouse.code`), PO confirmation date, delivery date, product table with single UoM column |
+| DO PDF content | PO number encoded as Code128 barcode (scannable by handheld), vendor info (Vendor ID, Tax ID, mobile, email), store ID (from `stock.warehouse.code`), PO confirmation date, delivery date, product table with single UoM column |
 | UoM handling | Single UoM per product line, inherited from PO (e.g., Thùng 12 Chai, Kg). Vendor can only adjust quantity, not UoM. If UoM is wrong, PO must be re-created |
 | Receipt confirmation | Store confirms Receipt in Odoo — sets final qty_done. DO status becomes Done, showing final received amounts |
 | Returns | RPO (Return Purchase Order) + RN (Return Note / Biên Bản Trả Hàng). Vendor can only set pickup date and confirm — cannot change quantities. Must sign and print RN like DO |
@@ -51,7 +57,7 @@ An independent bilingual (Vietnamese + English) web portal serving two types of 
 | Vendor comment on DO | Free-text note added when vendor signs the DO |
 | PDF retention | 24 months — matching PO data retention |
 | Responsive design | Works on both desktop and mobile equally |
-| Vendor accounts | 1 Odoo partner = 1 portal account. Email login managed on portal (not synced from Odoo). No multi-user per vendor |
+| Vendor accounts | 1 Odoo partner = 1 portal account. Login by Vendor ID (`res.partner.id`). No multi-user per vendor |
 | Profile changes | All profile changes must go through Odoo — admin cannot edit in portal |
 | Admin language | Bilingual (Vietnamese + English) — same as vendor portal |
 | SSL / TLS | Handled at infrastructure level (load balancer / reverse proxy) |
@@ -69,22 +75,39 @@ An independent bilingual (Vietnamese + English) web portal serving two types of 
 
 ## Architecture Overview
 
-```
-Vendor Browser
-     │  HTTPS
-     ▼
-Nginx (reverse proxy + TLS termination)
-     ├── /        → React SPA (frontend container)
-     └── /api/    → FastAPI (backend container)
-                        │
-                        ├── PostgreSQL  (vendor accounts, tokens, signatures)
-                        ├── Redis       (rate limiting, token blacklist)
-                        ├── AWS SES     (all outbound email)
-                        │
-                        └── Odoo 16 CE (separate VM)
-                              XML-RPC  : portal → Odoo (read/write)
-                              Odoo → portal : sync mechanism TBD (webhook/polling)
-                              HTTP session : PDF download
+```mermaid
+flowchart TD
+    classDef client   fill:#FEF3C7,stroke:#F59E0B,color:#451A03,font-weight:bold
+    classDef infra    fill:#DBEAFE,stroke:#3B82F6,color:#1E3A5F,font-weight:bold
+    classDef app      fill:#D1FAE5,stroke:#10B981,color:#064E3B,font-weight:bold
+    classDef store    fill:#EDE9FE,stroke:#7C3AED,color:#2E1065,font-weight:bold
+    classDef external fill:#FEE2E2,stroke:#EF4444,color:#7F1D1D,font-weight:bold
+
+    Browser(["Vendor / Admin Browser"]):::client
+
+    subgraph VM_PORTAL["Portal VM — Docker Compose"]
+        Nginx["Nginx\nReverse Proxy + TLS termination"]:::infra
+        React["React + Vite\nFrontend container\nserves /"]:::app
+        FastAPI["FastAPI\nBackend container\nserves /api/"]:::app
+        PG["PostgreSQL\nVendor accounts, tokens\nDO records, audit log"]:::app
+        Redis["Redis\nRate limiting\nToken blacklist"]:::app
+    end
+
+    subgraph VM_ODOO["Odoo VM"]
+        Odoo["Odoo 16 CE\nPurchase, Inventory\nPartner data"]:::store
+    end
+
+    SES["AWS SES\nOutbound email"]:::external
+
+    Browser -->|HTTPS| Nginx
+    Nginx -->|"/"| React
+    Nginx -->|"/api/"| FastAPI
+    FastAPI --- PG
+    FastAPI --- Redis
+    FastAPI -->|"XML-RPC — read/write\nbutton_confirm, button_cancel\nqty_done, partner sync"| Odoo
+    FastAPI -->|"HTTP session\nPDF download"| Odoo
+    Odoo -.->|"Webhook / polling TBD\nreceipt validated"| FastAPI
+    FastAPI -->|"Send email\nboto3"| SES
 ```
 
 **Key principle:** The React frontend never contacts Odoo. All Odoo communication is proxied through the FastAPI backend using a single service account. Vendor credentials never leave the portal's own database.
@@ -94,8 +117,8 @@ Nginx (reverse proxy + TLS termination)
 ## Data Flow Summary
 
 ### Authentication flow
-1. Vendor enters their **email address** and password on the login page
-2. Backend looks up `vendor_users` by `email`
+1. Vendor enters their **Vendor ID** (integer — `res.partner.id` from Odoo) and password on the login page
+2. Backend looks up `vendor_users` by `odoo_partner_id`
 3. Password verified with bcrypt — same error message for all failure cases
 4. On success, issues a JWT access token (30 min) and refresh token (7 days)
 5. All subsequent requests carry the access token in the `Authorization` header
@@ -104,10 +127,10 @@ Nginx (reverse proxy + TLS termination)
 
 ### Profile sync flow
 1. Scheduled job runs every 6 hours, reads `res.partner` where `supplier_rank > 0`
-2. **New partner:** creates `vendor_users` row (no password, inactive) with email initially copied from Odoo `res.partner.email`. Generates 24h invite token, sends welcome email via AWS SES containing the email (login) and set-password link
-3. **Existing partner:** syncs profile fields only (name, company_name, phone, tax_id) — `email` and `hashed_password` are **never overwritten** by sync. Email is managed independently on the portal
+2. **New partner:** creates `vendor_users` row (no password, inactive) linked by `odoo_partner_id`. Generates 24h invite token, sends welcome email via AWS SES containing the **Vendor ID** and set-password link
+3. **Existing partner:** syncs profile fields only (`full_name`, `company_name`, `phone`, `tax_id`) — `hashed_password` is **never overwritten** by sync
 4. **Partner deactivated in Odoo:** sets `is_active = FALSE` — vendor can no longer log in
-5. Partners with no email in Odoo are skipped and logged for manual follow-up (email is needed for initial account creation only)
+5. Partners with no email in Odoo are skipped and logged for manual follow-up (email is needed to deliver the welcome email)
 
 ### Delivery Order (DO) flow
 1. When a vendor confirms a PO, the portal auto-creates exactly 1 DO linked to the PO
@@ -152,16 +175,16 @@ This section describes the portal's behaviour in plain business terms, intended 
 1. The portal sync job runs every 6 hours and detects the new vendor in Odoo
 2. A portal account is created, linked to the vendor's Odoo ID
 3. The vendor receives a **Welcome Email** (in Vietnamese by default) containing:
-   - Their **email address** — which they will use to log in
+   - Their **Vendor ID** (`res.partner.id`) — the integer they will use to log in
    - A **set-password link** valid for 24 hours
 4. The vendor clicks the link, sets their own password, and their account becomes active
-5. From this point, the vendor can log in at any time using their email and password
+5. From this point, the vendor can log in at any time using their Vendor ID and password
 
-**If the vendor misses the 24h window:** they use the "Forgot Password" option on the login page, enter their email, and receive a new reset link.
+**If the vendor misses the 24h window:** they use the "Forgot Password" option on the login page, enter their Vendor ID, and receive a new reset link.
 
 **If the vendor has no email in Odoo:** the sync job skips them and logs the case. The internal team must add an email to the Odoo partner record — the account will be created on the next sync cycle.
 
-**Profile updates:** If the vendor's name, phone, tax ID, or company name changes in Odoo, the portal reflects those changes automatically on the next sync. The vendor's **email** (login) and **password** are managed on the portal only and are never overwritten by sync.
+**Profile updates:** If the vendor's name, phone, tax ID, or company name changes in Odoo, the portal reflects those changes automatically on the next sync. The vendor's **password** is managed on the portal only and is never overwritten by sync. The Vendor ID never changes — it is the permanent `res.partner.id` assigned by Odoo.
 
 ---
 
@@ -208,47 +231,7 @@ Draft RFQs are not shown. Vendors can view PO data for **24 months** from creati
 
 This is the core business process of the portal. It replaces the need for vendors to call or email to confirm delivery quantities. The portal separates the **Delivery Order (DO)** — what the vendor plans to deliver — from the **Receipt** — what the store actually receives in Odoo.
 
-```
-Purchase Order confirmed on Portal
-         │
-         ▼
-DO auto-created (1 per PO)
-         │
-         ▼
-Vendor edits DO: delivery date + quantities per line
-(qty must be <= ordered qty; can save multiple times)
-         │
-         ▼
-Vendor clicks "Sign DO"
-         │
-         ▼
-Vendor draws their digital signature on screen
-         │
-         ▼
-DO is locked — delivery date + set quantities pushed to Odoo Receipt
-Signed DO PDF generated (can be printed multiple times)
-         │
-         ▼
-Vendor prints DO, brings goods + paper DO to store
-         │
-         ▼
-Store receives goods, both parties sign 2 paper copies (each keeps 1)
-         │
-         ▼
-Store reviews Receipt in Odoo (can adjust quantities)
-         │
-         ▼
-Store confirms Receipt in Odoo — qty_done finalized
-         │
-         ▼
-Portal notified (sync mechanism TBD)
-DO status → Done, final received amounts shown
-         │
-         ├──▶ Email to vendor: receipt confirmed
-         │    (alerts if any quantities differ)
-         │
-         └──▶ Vendor can export PDF/CSV for invoicing
-```
+> Xem [Business Overview](PROCESS_FLOW.md#business-overview-simple-view) trong PROCESS_FLOW.md để có sơ đồ toàn bộ flow từ RFQ đến Done.
 
 **Key points for stakeholders:**
 - The vendor edits the DO and signs — they do not trigger any stock movement in Odoo
@@ -308,7 +291,7 @@ If quantities were entered incorrectly and the vendor needs to resubmit, a porta
 
 | Event | Recipient | Language | Content |
 |---|---|---|---|
-| New vendor account created | Vendor | Vietnamese (default) | Vendor's email login + set-password link |
+| New vendor account created | Vendor | Vietnamese (default) | Vendor ID (integer) + set-password link |
 | Password reset requested | Vendor | Vendor's preferred language | Reset link (24h expiry) |
 | Vendor rejects RFQ | PO creator (store staff) | Vietnamese | PO rejected + cancelled in Odoo |
 | PO auto-cancelled (7 days) | Vendor + PO creator | Vendor's pref lang / Vietnamese | PO auto-cancelled due to no response within 7 days past Expected Arrival |
@@ -343,8 +326,10 @@ The portal supports a returns workflow. When a store needs to return goods to a 
 1. Store creates a Return Purchase Order (RPO) in Odoo and clicks "Send by Email" — Odoo sends email to vendor asking them to log into the portal to confirm (same flow as PO/RFQ)
 2. RPO appears on the vendor portal — vendor can see the products and quantities being returned
 3. Vendor sets a **pickup date** (single date for entire RN) — this is when they will come to collect the returned goods
-4. Vendor clicks **"Confirm & Sign"** — confirms the RPO, signs the RN digitally, and prints the RN PDF in one step. **Vendor cannot reject or cancel an RPO**
-5. Vendor goes to the store on the pickup date to collect the returned goods, bringing the printed RN (2 copies, both parties sign)
+4. Vendor clicks **"Confirm & Sign"** — confirms the RPO and signs the RN digitally. **Vendor cannot reject or cancel an RPO**
+5. RN PDF is generated — vendor prints it (2 copies) before going to the store
+6. Vendor goes to the store on the pickup date to collect the returned goods, bringing the printed RN
+7. Both parties sign the 2 paper copies — each keeps 1
 8. Store confirms the return receipt in Odoo
 9. RN status becomes Done on the portal
 

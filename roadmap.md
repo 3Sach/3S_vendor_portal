@@ -133,8 +133,8 @@ vendor-portal/
 | Column | Type | Notes |
 |---|---|---|
 | `id` | serial PK | internal portal ID |
-| `odoo_partner_id` | integer, unique | Odoo partner ID (used for data scoping, not for login) |
-| `email` | varchar, unique | **login identifier** — initially copied from Odoo on account creation, then managed on portal only (never overwritten by sync) |
+| `odoo_partner_id` | integer, unique | **login identifier** — `res.partner.id` from Odoo, permanent, never changes |
+| `email` | varchar | for email notifications only — synced from Odoo `res.partner.email` on account creation, never used for login |
 | `hashed_password` | varchar | NULL until invite accepted |
 | `full_name` | varchar | synced from Odoo — contact person name |
 | `company_name` | varchar | synced from Odoo |
@@ -229,19 +229,19 @@ vendor-portal/
 ### Auth endpoints
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/auth/login` | Email + password → access + refresh tokens (role: `vendor`) |
+| POST | `/api/auth/login` | Vendor ID (integer) + password → access + refresh tokens (role: `vendor`) |
 | POST | `/api/admin/auth/login` | Username + password → access + refresh tokens (role: `admin`) |
 | POST | `/api/auth/refresh` | Refresh token → new access token (preserves role) |
 | POST | `/api/auth/set-password` | First-time invite or password reset via token (vendors only) |
-| POST | `/api/auth/forgot-password` | Sends reset email via AWS SES by email address |
+| POST | `/api/auth/forgot-password` | Sends reset email via AWS SES by Vendor ID |
 | POST | `/api/auth/logout` | Blacklists refresh token in Redis |
 
 ### JWT role claim
 The JWT access token carries a `role` field (`vendor` or `admin`). All admin-only endpoints check for `role == 'admin'` via a dedicated FastAPI dependency. Vendor endpoints check for `role == 'vendor'`. A vendor token cannot access admin routes, and an admin token cannot be used to impersonate a vendor.
 
 ### Security considerations
-- **Timing-safe login:** always run `bcrypt.verify` even when the email does not exist
-- **Consistent error messages:** same message for unknown email and wrong password — never reveal whether the email exists
+- **Timing-safe login:** always run `bcrypt.verify` even when the Vendor ID does not exist
+- **Consistent error messages:** same message for unknown Vendor ID and wrong password — never reveal whether the ID exists
 - **Token blacklist:** on logout, refresh token is added to a Redis set with TTL matching remaining token lifetime
 - **Invite token expiry:** 24 hours. If expired, vendor must request a new one via forgot-password
 
@@ -345,7 +345,7 @@ The audit log is viewable by admins via `GET /api/admin/audit-log`, filterable b
 
 | Trigger | Recipient | Content |
 |---|---|---|
-| New vendor synced | Vendor | Welcome email with vendor's email login + set-password link |
+| New vendor synced | Vendor | Welcome email with Vendor ID (integer) + set-password link |
 | Forgot password requested | Vendor | Reset link (24h expiry) |
 | Vendor rejects RFQ | PO creator (store staff) | PO rejected + cancelled in Odoo |
 | PO auto-cancelled (7 days) | Vendor + PO creator | PO auto-cancelled — no response within 7 days past Expected Arrival |
@@ -421,10 +421,10 @@ The printed DO PDF includes the following sections, all in Vietnamese:
 ### Pages & routes
 | Route | Page | Role | Description |
 |---|---|---|---|
-| `/login` | Login | Both | Email + password + language toggle |
+| `/login` | Login | Both | Vendor ID (integer) + password + language toggle |
 | `/admin/login` | Admin Login | Admin | Username + password (separate login page) |
 | `/set-password` | Set Password | Vendor | First-time invite and forgot-password reset |
-| `/forgot-password` | Forgot Password | Vendor | Enter email to receive reset link |
+| `/forgot-password` | Forgot Password | Vendor | Enter Vendor ID to receive reset link |
 | `/dashboard` | Dashboard | Vendor | PO list with search/filter, status badges, checkbox selection + "Export" button (PDF individual/summary or CSV) |
 | `/purchase-orders/:id` | PO Detail | Vendor | Order lines + linked DO + receipt comparison (vendor qty vs store qty) |
 | `/delivery-orders/:id` | DO Detail | Vendor | Product lines with editable delivery qty + single delivery date (locked if signed) |
@@ -524,7 +524,7 @@ The PO detail page shows the linked DO with its status. When the DO is Done (sto
 - A loading state is shown while the PDF is being generated server-side
 
 ### Key UX considerations
-- Login field label: **"Email"** with helper text explaining it was provided in the welcome email
+- Login field label: **"Mã nhà cung cấp / Vendor ID"** with helper text explaining it was provided in the welcome email (must be a number input)
 - DO lines show ordered qty, delivery qty, and received qty (when available) side by side for easy comparison
 - Waiting POs show "Confirm PO" and "Reject" buttons prominently
 - Lock notice on signed DOs: "Phiếu giao hàng đã được ký / Delivery Order has been signed"
@@ -619,8 +619,9 @@ All containers: `restart: unless-stopped`. Health check on backend container (`G
 
 ## Critical Gotchas
 
-1. **Admin login is separate** — admin uses username (not email) on a separate login page `/admin/login`; admin JWT carries `role: admin`
-2. **Profile sync never touches `hashed_password` or `email`** — only `full_name`, `company_name`, `phone`, `tax_id` are ever overwritten by the sync job; `email` is the login credential and is never overwritten after account creation
+1. **Vendor login uses Vendor ID (integer), not email** — frontend login field must be a `number` input; welcome email must clearly state the Vendor ID; `odoo_partner_id` is the lookup key in `vendor_users`
+2. **Admin login is separate** — admin uses username (not Vendor ID) on a separate login page `/admin/login`; admin JWT carries `role: admin`
+3. **Profile sync never touches `hashed_password`** — only `full_name`, `company_name`, `phone`, `tax_id` are overwritten by the sync job; `email` is synced on initial account creation only, never again
 3. **Portal does not call `button_validate`** — vendor edits DO and signs; Odoo validation is done by the store. The Odoo picking stays in `assigned` state after the vendor signs
 4. **DO locking is portal-side only** — lock state lives in the `delivery_orders` table; Odoo is not aware of it. Admins unlock via the portal admin section
 5. **Admin can unlock DOs — vendor cannot** — the unlock endpoint is admin-only; vendors have no self-service unlock
@@ -629,8 +630,8 @@ All containers: `restart: unless-stopped`. Health check on backend container (`G
 8. **Vendor comment is optional but must be stored** — even if empty, the `vendor_comment` field in `delivery_orders` must be explicitly stored (empty string, not NULL) to distinguish "no comment provided" from a data error
 9. **Audit log is append-only** — no delete or update endpoints for `audit_log`; write failures should be logged but must not cause the parent action to fail (non-blocking)
 10. **Odoo 16 field names** — `qty_done` on `stock.move.line` (not `quantity`), `move_lines` on `stock.picking` (not `move_ids`)
-11. **Partners with no email are skipped** — sync job must log these; they cannot receive an invite and must be handled manually
-12. **Timing-safe authentication** — bcrypt verification must always run, even for unknown emails, to prevent user enumeration via response timing
+12. **Partners with no email are skipped** — sync job must log these; they cannot receive the welcome email and must be handled manually (Vendor ID is still assigned by Odoo, email is only needed to deliver the invite)
+13. **Timing-safe authentication** — bcrypt verification must always run, even for unknown Vendor IDs, to prevent user enumeration via response timing
 13. **No axios** — all frontend HTTP calls use native `fetch` wrapped in a single `apiFetch` utility with automatic JWT refresh
 14. **i18n covers both vendor and admin UI** — all portal pages including admin section support Vietnamese and English; vendor-facing emails follow `preferred_language`; store-facing emails are in Vietnamese
 15. **TLS is upstream** — the portal Nginx does not manage certificates; ensure the upstream proxy passes `X-Forwarded-Proto` and `X-Real-IP` headers correctly to the FastAPI backend

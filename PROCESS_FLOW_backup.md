@@ -40,7 +40,7 @@ flowchart LR
     V5 --> I1 --> I2 --> I3
 ```
 
-> **Colours:** Blue = Store | Green = Vendor | Purple = Portal System | Yellow = Internal 3Sach
+> **Colours:** 🔵 Blue = Store | 🟢 Green = Vendor | 🟣 Purple = Portal System | 🟡 Yellow = Internal 3Sach
 
 ---
 
@@ -49,60 +49,60 @@ flowchart LR
 ```mermaid
 flowchart TD
     subgraph ONBOARD["Vendor Onboarding"]
-        A1([New vendor added in Odoo\nsupplier_rank > 0]) --> A2[Sync job runs every 6h]
+        A1(["New vendor added in Odoo\nsupplier_rank > 0"]) --> A2[Sync job runs every 6h]
         A2 --> A3{Has email?}
         A3 -- No --> A4[Skip & log for manual follow-up]
-        A3 -- Yes --> A5[Create portal account\ninactive, no password]
-        A5 --> A6[Send Welcome Email via AWS SES\nVendor ID (integer) + set-password link 24h]
-        A6 --> A7[Vendor sets password\nAccount becomes active]
+        A3 -- Yes --> A5["Create portal account\ninactive, no password"]
+        A5 --> A6["Send Welcome Email via AWS SES\nVendor ID + set-password link 24h"]
+        A6 --> A7["Vendor sets password\nAccount becomes active"]
     end
 
-    subgraph RFQ_PO["RFQ -> PO Confirmation / Rejection"]
-        B1([Store creates RFQ in Odoo]) --> B2[Sent RFQ\nEmail sent to vendor]
-        B2 --> B3{Vendor action\non Portal?}
-        B3 -- Confirm --> B4[Vendor clicks Confirm PO\non Vendor Portal]
-        B4 --> B5[Portal calls button_confirm\non purchase.order via XML-RPC]
-        B5 --> B6[PO Confirmed in Odoo\nstate: sent -> purchase\nNo email sent]
-        B3 -- Reject --> B7[Vendor clicks Reject\non Vendor Portal]
-        B7 --> B8[Portal calls button_cancel\non purchase.order via XML-RPC]
-        B8 --> B9[RFQ Cancelled in Odoo\nstate: sent -> cancel]
-        B9 --> B10[Email to PO creator\nRFQ rejected by vendor]
-        B3 -- No action\n7 days past\nExpected Arrival --> B3X[Portal auto-cancels\nbutton_cancel via XML-RPC]
+    subgraph RFQ_PO["RFQ to PO Confirmation / Rejection"]
+        B1(["Store creates RFQ in Odoo"]) --> B2["Sent RFQ\nEmail sent to vendor"]
+        B2 --> B3{"Vendor action\non Portal?"}
+        B3 -- Confirm --> B4["Vendor clicks Confirm PO\non Vendor Portal"]
+        B4 --> B5["Portal calls button_confirm\non purchase.order via XML-RPC"]
+        B5 --> B6["PO Confirmed in Odoo\nstate: sent to purchase\nNo email sent"]
+        B3 -- Reject --> B7["Vendor clicks Reject\non Vendor Portal"]
+        B7 --> B8["Portal calls button_cancel\non purchase.order via XML-RPC"]
+        B8 --> B9["RFQ Cancelled in Odoo\nstate: sent to cancel"]
+        B9 --> B10["Email to PO creator\nRFQ rejected by vendor"]
+        B3 -- No action / 7 days past Expected Arrival --> B3X["Portal auto-cancels\nbutton_cancel via XML-RPC"]
+        B3X --> B3Y["Email to Vendor + PO creator\nPO auto-cancelled — no response"]
     end
 
     subgraph DO["Delivery Order — Vendor Portal"]
-        C1[1 DO auto-created per confirmed PO\nStatus: Draft] --> C2[Vendor edits DO on portal\nSingle delivery date + quantities\nQty <= ordered qty\nDelivery qty always in base UoM]
-        C2 --> C3[Vendor clicks Sign DO\nDraws digital signature\nOptional comment\nQty only — cannot change UoM]
-        C3 --> C4[DO status: Signed\nLocked — no further edits]
-        C4 --> C5[Portal pushes to Odoo\nDelivery date + set quantities\ninto Receipt]
-        C4 --> C6[Vendor can print DO PDF\nVietnamese, PO as Code128 barcode\nCan print multiple times]
+        C1["1 DO auto-created per confirmed PO\nStatus: Draft"] --> C2["Vendor edits DO on portal\nSingle delivery date + quantities\nQty must not exceed ordered qty\nDelivery qty always in base UoM"]
+        C2 --> C3["Vendor clicks Sign DO\nDraws digital signature\nOptional comment\nQty only — cannot change UoM"]
+        C3 --> C4["DO status: Signed\nLocked — no further edits"]
+        C4 --> C5["Portal pushes to Odoo\nDelivery date + set quantities\ninto Receipt"]
+        C4 --> C6["Vendor can print DO PDF\nVietnamese, PO as Code128 barcode\nCan print multiple times"]
     end
 
     subgraph DELIVERY["Physical Delivery — Store"]
-        D1[Vendor brings printed DO\nto store with goods] --> D2[Store receives goods\nChecks quantities]
-        D2 --> D3[Both parties sign\n2 paper copies of DO\nEach keeps 1 copy]
+        D1["Vendor brings printed DO\nto store with goods"] --> D2["Store receives goods\nChecks quantities"]
+        D2 --> D3["Both parties sign\n2 paper copies of DO\nEach keeps 1 copy"]
     end
 
     subgraph STORE_CONFIRM["Receipt Confirmation — Odoo"]
-        E1[Store reviews Receipt in Odoo\nCan adjust set quantities] --> E2[Store confirms Receipt\nqty_done is finalized]
-        E2 --> E3[Portal notified\nDO status -> Done]
-        E3 --> E4[Email to vendor:\nReceipt confirmed\nAlerts if qty differs]
+        E1["Store reviews Receipt in Odoo\nCan adjust set quantities"] --> E2["Store confirms Receipt\nqty_done is finalized"]
+        E2 --> E3["Portal notified\nDO status becomes Done"]
+        E3 --> E4["Email to vendor\nReceipt confirmed\nAlerts if qty differs"]
     end
 
     subgraph UNLOCK["Exception: Unlock DO"]
-        G1([Vendor entered wrong quantities]) --> G2[Portal Admin unlocks DO\nDO status -> Draft]
+        G1(["Vendor entered wrong quantities"]) --> G2["Portal Admin unlocks DO\nDO status returns to Draft"]
         G2 --> G3[Email notification sent to vendor]
-        G3 --> G4[Vendor updates DO\nand re-signs]
-        G4 --> C3
+        G3 --> G4[Vendor updates DO and re-signs]
     end
 
     subgraph RETURNS["Returns Flow"]
-        R1([Store creates RPO in Odoo\nEmail sent to vendor]) --> R2[RPO appears on portal\nVendor sees return items]
-        R2 --> R3[Vendor sets pickup date\nClicks Confirm & Sign\nCannot reject or change qty]
-        R3 --> R4[RN signed and locked\nVendor prints RN PDF]
-        R4 --> R5[Vendor goes to store\nto collect returned goods\nBoth sign 2 paper copies]
-        R5 --> R6[Store confirms return\nreceipt in Odoo]
-        R6 --> R7[RN status -> Done]
+        R1(["Store creates RPO in Odoo\nEmail sent to vendor"]) --> R2["RPO appears on portal\nVendor sees return items"]
+        R2 --> R3["Vendor sets pickup date\nClicks Confirm & Sign\nCannot reject or change qty"]
+        R3 --> R4["RN signed and locked\nVendor prints RN PDF"]
+        R4 --> R5["Vendor goes to store\nto collect returned goods\nBoth sign 2 paper copies"]
+        R5 --> R6["Store confirms return\nreceipt in Odoo"]
+        R6 --> R7[RN status: Done]
     end
 
     %% Connect major phases
@@ -110,7 +110,8 @@ flowchart TD
     B6 --> C1
     C6 --> D1
     D3 --> E1
-    C4 -.->|"Signed / Locked state"| UNLOCK
+    C4 -.->|"Signed / Locked state"| G1
+    G4 -.->|"Re-enters signing"| C3
 ```
 
 ---
