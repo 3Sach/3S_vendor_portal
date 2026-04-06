@@ -50,7 +50,7 @@ flowchart TD
         A2 --> A3{Has email?}
         A3 -- No --> A4[Skip & log for manual follow-up]
         A3 -- Yes --> A5[Create portal account\ninactive, no password]
-        A5 --> A6[Send Welcome Email via AWS SES\nEmail login + set-password link 24h]
+        A5 --> A6[Send Welcome Email via AWS SES\nVendor ID (integer) + set-password link 24h]
         A6 --> A7[Vendor sets password\nAccount becomes active]
     end
 
@@ -166,9 +166,69 @@ sequenceDiagram
 
 ---
 
+## Auth Flow
+
+### Vendor Authentication
+1. Vendor enters their **Vendor ID** (integer — the `res.partner.id` from Odoo) and password on the login page
+2. Backend looks up `vendor_users` by `odoo_partner_id`; bcrypt verification always runs (even for unknown IDs — timing-safe)
+3. Same generic error message for wrong ID or wrong password — never reveals whether the ID exists
+4. On success: issues a **JWT access token** (30 min) and **refresh token** (7 days), both carrying `role: vendor`
+5. All subsequent requests carry the access token in the `Authorization` header
+6. On 401: frontend silently calls `/api/auth/refresh` → retries once with new token
+7. On refresh failure: clears storage → redirects to `/login`
+
+### Admin Authentication
+- Admin logs in at `/admin/login` with a **username** (not a Vendor ID) and password
+- JWT carries `role: admin` — admin tokens cannot access vendor routes and vice versa
+- First admin account is seeded from `ADMIN_INITIAL_PASSWORD` env variable on startup
+
+### Token Blacklist
+- On logout, refresh token is added to Redis with TTL matching remaining lifetime
+
+---
+
+## Email Notifications
+
+| Event | Recipient | Language | Content |
+|---|---|---|---|
+| New vendor account created (sync job) | Vendor | Vietnamese (default) | Vendor ID (integer) + set-password link (24h expiry) |
+| Password reset requested | Vendor | Vendor's preferred language | Reset link (24h expiry) |
+| RFQ rejected by vendor | PO creator (internal) | English | RFQ reference, vendor name |
+| DO signed by vendor | — | — | No email sent on signing |
+| Receipt confirmed by store (qty matches) | Vendor | Vendor's preferred language | Confirmation with PO number, receipt reference |
+| Receipt confirmed by store (qty differs) | Vendor | Vendor's preferred language | Alert with difference details |
+| DO unlocked by admin | Vendor | Vendor's preferred language | Notification that DO is available to re-edit |
+
+> All vendor-facing emails follow `vendor_users.preferred_language` (`vi` or `en`). Internal emails are always in English. Email delivery is via **AWS SES** with a dedicated IAM user (`ses:SendEmail` only).
+
+---
+
+## Admin Capabilities
+
+Portal admins share the same UI layout as vendors with additional menu items: **Vendors**, **Sync Status**, **Audit Log**.
+
+| Capability | Endpoint |
+|---|---|
+| View all vendor accounts (status, last login, receipt counts) | `GET /api/admin/vendors` |
+| Drill into a specific vendor's POs and receipts | `GET /api/admin/vendors/{partner_id}` |
+| Deactivate / reactivate a vendor account | `PATCH /api/admin/vendors/{partner_id}/deactivate|reactivate` |
+| Download any vendor's signed PDF | `GET /api/admin/receipts/{picking_id}/pdf` |
+| Unlock a signed DO (vendor can then re-edit and re-sign) | `POST /api/admin/receipts/{picking_id}/unlock` |
+| Manually trigger the Odoo partner sync job | `POST /api/admin/sync` |
+| View sync status (last run, vendors synced, skipped) | `GET /api/admin/sync/status` |
+| View paginated audit log | `GET /api/admin/audit-log` |
+
+**Audit log** records four action types: `login`, `qty_update`, `sign`, `unlock`. It is append-only — never editable or deletable through the portal.
+
+**Profile edits are not possible in the portal.** All vendor profile changes (name, email, phone, company) must be made in Odoo and will sync on the next 6-hour cycle. Admin cannot modify vendor profiles directly.
+
+---
+
 ## PO Status Mapping: Portal vs Odoo
 
 Portal and Odoo maintain **different status labels**. Odoo's base behaviour is never modified.
+
+> **Implementation scope (README v4):** The portal API returns only POs in `purchase` (Confirmed) and `done` (Done) states for the vendor's main browsing view. The `sent` (Waiting/RFQ) state is surfaced separately for the confirmation/rejection action — vendors must act before a PO moves to `purchase`.
 
 | Portal PO Status | Odoo State | Trigger | Vendor can do |
 |---|---|---|---|
