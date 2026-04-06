@@ -150,6 +150,7 @@ Draft RFQs are not shown.
 - Odoo updates the PO state from `sent` to `purchase` and generates the linked Delivery Order / Receipt
 - The portal reflects the new `purchase` state immediately after the call succeeds
 - Once confirmed, the button is no longer shown — the record is now read-only on the PO level
+- **Note:** Whether Odoo enforces an Order Deadline on RFQs is pending IT confirmation (see Section 8)
 
 **Searching and filtering:**
 - Vendor can search by PO number (e.g. typing "PO004" filters the list instantly)
@@ -162,48 +163,49 @@ Draft RFQs are not shown.
 
 ### 3. Delivery Confirmation Workflow
 
-This is the core business process of the portal. It replaces the need for vendors to call or email to confirm delivery quantities.
+This is the core business process of the portal. It covers the full flow from DO creation to physical delivery at the store.
 
 ```
 Purchase Order confirmed in Odoo
          │
          ▼
-Vendor logs into portal
+DO (Delivery Order) sinh ra tự động với số ref theo PO
          │
          ▼
-Vendor opens the linked Receipt (status: Ready)
+Vendor logs into portal, chỉnh DO:
+  - Ngày giao hàng
+  - Số lượng giao (≤ số lượng đặt)
+  (can save and come back multiple times)
          │
          ▼
-Vendor enters actual delivered quantity for each product line
-(can save and come back multiple times — nothing is final yet)
-         │
-         ▼
-Vendor clicks "Sign & Confirm"
+Vendor clicks "Sign & Confirm" DO on Portal
          │
          ▼
 Vendor draws their signature on screen
          │
          ▼
-Portal generates a signed PDF (Odoo delivery slip + confirmation page with signature)
-Receipt is locked — no further edits possible from the portal
+Portal generates signed DO PDF (có chữ ký xác nhận)
+DO is locked — no further edits on Portal
          │
-         ├──▶ Vendor receives confirmation email with PDF attached
+         ▼
+Vendor downloads and prints PDF (2 copies)
          │
-         └──▶ Internal team receives alert email with vendor name, PO ref, link to Odoo
-                         │
-                         ▼
-              Internal team reviews quantities in Odoo
-                         │
-                         ▼
-              Admin validates (or adjusts) the receipt in Odoo
-              Admin decides on backorder if quantities are short
+         ▼
+Vendor brings 2 DO copies to the store (cửa hàng)
+         │
+         ▼
+Store physically signs both DO copies
+  — each party keeps 1 copy
+         │
+         ▼
+Store confirms on Odoo
 ```
 
 **Key points for stakeholders:**
-- The vendor only enters quantities and signs — they do not trigger any stock movement in Odoo
-- All stock validation decisions remain with the internal team in Odoo
-- The signed PDF serves as the vendor's formal delivery confirmation document
-- Once signed, the portal record is locked to preserve the integrity of the confirmation
+- Vendor ký xác nhận DO trên Portal trước khi giao hàng — PDF có chữ ký là chứng từ chính thức
+- Vendor cầm 2 bản DO (PDF đã ký) ra cửa hàng — cửa hàng ký physically cả 2 bản
+- Cửa hàng xác nhận trên Odoo sau khi nhận hàng và ký DO
+- Không có quy trình tự động khoá DO lúc 23:00 — vendor chủ động ký khi sẵn sàng giao
 
 ---
 
@@ -254,6 +256,31 @@ It is equally important for stakeholders to understand the boundaries of the por
 - **Does not manage backorders** — the internal team decides on backorders in Odoo after reviewing vendor-submitted quantities
 - **Does not expose any Odoo credentials to vendors** — vendors have no access to Odoo, directly or indirectly
 - **Does not allow vendors to see other vendors' data** — enforced at every layer of the system
+
+---
+
+### 8. Data Sync between Portal and Odoo (⚠️ Pending IT Confirmation)
+
+> **Lưu ý:** Section này tập hợp tất cả các điểm liên quan đến việc đồng bộ dữ liệu giữa Portal và Odoo. Cần hỏi lại IT team để xác nhận cơ chế và thời điểm sync trước khi implement.
+
+**Các điểm cần xác nhận với IT:**
+
+| # | Chủ đề | Mô tả hiện tại | Cần xác nhận |
+|---|---|---|---|
+| 1 | **Order Deadline trên Odoo** | Specs hiện tại giả định PO có Order Deadline, vendor phải confirm trước deadline | Odoo 16 CE có trường Order Deadline trên `purchase.order` không? Nếu có, trường nào? Nếu không, cơ chế hết hạn RFQ hoạt động ra sao? |
+| 2 | **Vendor profile sync** | Sync job chạy mỗi 6h, đọc `res.partner` từ Odoo → tạo/cập nhật `vendor_users` trên Portal | Tần suất sync? Real-time hay batch? |
+| 3 | **PO data sync** | Portal đọc PO trực tiếp từ Odoo qua XML-RPC mỗi khi vendor truy cập | Cache strategy? Có cần sync PO về Portal DB không? |
+| 4 | **PO confirmation → Odoo** | Portal gọi `button_confirm` trên `purchase.order` qua XML-RPC | Có cần thêm validation nào phía Odoo không? |
+| 5 | **DO data** | DO sinh ra từ Odoo khi PO confirmed, Portal đọc qua XML-RPC | Cách Portal nhận biết DO mới? Polling hay webhook? |
+| 6 | **DO sign → Odoo** | Sau khi vendor ký DO trên Portal, thông tin có cần push về Odoo không? | Push gì? Khi nào? |
+| 7 | **Receipt data sync** | Portal đọc `stock.picking` + `stock.move.line` từ Odoo | Vendor nhập `qty_done` trên Portal — có write ngược về Odoo không? |
+| 8 | **Receipt PDF** | Portal fetch delivery slip PDF từ Odoo HTTP session | Có cần lưu PDF trên Odoo hay chỉ Portal? |
+| 9 | **Vendor deactivation** | Khi vendor bị deactivate trên Odoo → sync job set `is_active = FALSE` trên Portal | Có cần deactivate ngay lập tức hay chờ sync cycle? |
+
+**Cơ chế sync hiện tại (draft — chờ IT xác nhận):**
+- **Odoo → Portal:** Scheduled job (mỗi 6h) cho vendor profiles; XML-RPC read-on-demand cho PO/DO/Receipt
+- **Portal → Odoo:** XML-RPC write cho PO confirmation (`button_confirm`); các thao tác khác chưa xác định
+- **PDF fetch:** HTTP session riêng (không dùng XML-RPC) để tải delivery slip từ Odoo
 
 ---
 

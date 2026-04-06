@@ -17,22 +17,20 @@ flowchart LR
 
     V1([✅ Nhà cung cấp\nxác nhận PO\ntrên Portal]):::vendor
     V2([📦 Điền số lượng\nvà ngày giao\ntrên Portal]):::vendor
-    V3([🚚 Giao hàng\nthực tế\ncho kho]):::vendor
-    V4([✍️ Ký xác nhận\ntrên Portal\nvà tải PDF]):::vendor
+    V3([✍️ Ký xác nhận DO\ntrên Portal\nvà tải PDF]):::vendor
+    V4([🚚 Cầm 2 tờ DO\nra cửa hàng]):::vendor
 
-    P1{{Portal tự động\nkhoá DO\nlúc 23:00}}:::portal
-    P2{{Portal tạo\nPDF có chữ ký\nvà gửi email}}:::portal
+    P1{{Portal tạo\nPDF có chữ ký}}:::portal
 
-    I1([🔍 Nội bộ\nkiểm tra\nsố lượng]):::internal
-    I2([✔️ Xác nhận\nnhập kho\ntrên Odoo]):::internal
+    I1([🏪 Cửa hàng ký\nphysically 2 tờ DO\nmỗi bên giữ 1 tờ]):::store
+    I2([✔️ Cửa hàng\nxác nhận\ntrên Odoo]):::store
 
     S1 --> S2 --> V1
     V1 --> V2
-    V2 --> P1
-    P1 --> V3
-    V3 --> V4
-    V4 --> P2
-    P2 --> I1
+    V2 --> V3
+    V3 --> P1
+    P1 --> V4
+    V4 --> I1
     I1 --> I2
     I2 --> DONE([🎉 Hoàn tất]):::store
 ```
@@ -56,26 +54,21 @@ flowchart TD
 
     subgraph RFQ_PO["🟨 RFQ → PO Confirmation  ·  Cửa hàng / Vendor Portal"]
         B1([Cửa hàng tạo RFQ trên Odoo]) --> B2[Sent RFQ\nEmail gửi cho NCC]
-        B2 --> B3{Vendor xác nhận PO\ntrước Order Deadline?}
-        B3 -- No --> B3X([PO không được xác nhận\nRFQ hết hạn])
-        B3 -- Yes --> B4[Vendor clicks 'Confirm PO'\non Vendor Portal]
+        B2 --> B4[Vendor clicks 'Confirm PO'\non Vendor Portal]
         B4 --> B5[Portal calls button_confirm\non purchase.order via XML-RPC]
         B5 --> B6[PO Confirmed\nOdoo cập nhật trạng thái: sent → purchase]
     end
 
     subgraph DO["🟧 Delivery Order  ·  Vendor Portal"]
-        C1[DO sinh ra tự động\nIn và sửa được] --> C2[NCC chỉnh DO trên portal\nNgày giao + số lượng\nSL giao ≤ SL đặt]
-        C2 --> C3{Trước 23:00\nđêm trước ngày giao?}
-        C3 -- Yes --> C4[DO vẫn có thể chỉnh sửa]
-        C4 --> C3
-        C3 -- No / 23:00 CUTOFF --> C5[Hệ thống xác nhận SL giao\nKhóa chỉnh sửa trên Vendor Portal]
-        C5 --> C6[DO bị khóa\nKhông sửa được]
-        C5 --> C7[Push vào Odoo\nCập nhật Receipt: ngày + SL dự kiến]
+        C1[DO sinh ra tự động\nsố ref theo PO] --> C2[NCC chỉnh DO trên portal\nNgày giao + số lượng\nSL giao ≤ SL đặt]
+        C2 --> C3[NCC ký xác nhận DO\ntrên Portal]
+        C3 --> C4[Portal tạo PDF có chữ ký\nDO bị khóa trên Portal]
+        C4 --> C5[NCC tải PDF\nvà in 2 bản DO]
     end
 
-    subgraph DELIVERY["🟩 Physical Delivery  ·  Kho nhận"]
-        D1[Kho nhận DO\nXác nhận SL] --> D2[NCC giao hàng\nKèm 2 tờ DO]
-        D2 --> D3[Ký xác nhận 2 tờ DO\nmỗi bên giữ 1 tờ]
+    subgraph DELIVERY["🟩 Physical Delivery  ·  Cửa hàng"]
+        D1[NCC cầm 2 tờ DO\nra cửa hàng giao hàng] --> D2[Cửa hàng ký physically\n2 tờ DO — mỗi bên giữ 1 tờ]
+        D2 --> D3[Cửa hàng xác nhận\ntrên Odoo]
     end
 
     subgraph PORTAL_CONFIRM["🟪 Receipt Confirmation  ·  Vendor Portal"]
@@ -106,8 +99,7 @@ flowchart TD
     %% Connect major phases
     A7 --> B2
     B6 --> C1
-    C6 --> D1
-    C7 --> E1
+    C5 --> D1
     D3 --> E1
     E6 --> F1
     E6 -.->|"Signed / Locked state"| UNLOCK
@@ -127,22 +119,22 @@ sequenceDiagram
 
     Note over Vendor,Team: ── Phase 1: RFQ & PO Confirmation ──
     Odoo->>Vendor: Sent RFQ email (NCC)
-    Vendor->>Portal: Confirm PO (trước Order Deadline)
+    Vendor->>Portal: Confirm PO
     Portal->>Odoo: button_confirm on purchase.order
     Odoo-->>Portal: PO state: sent → purchase
     Odoo-->>Portal: DO / Receipt created (assigned)
 
-    Note over Vendor,Team: ── Phase 2: Delivery Order Edit ──
+    Note over Vendor,Team: ── Phase 2: Delivery Order — Ký & Tải PDF ──
     Portal->>Vendor: DO available — editable
     Vendor->>Portal: Chỉnh DO: ngày giao + SL giao (≤ SL đặt)
-    Note over Portal: 23:00 CUTOFF — đêm trước ngày giao
-    Portal->>Portal: Lock DO, confirm SL giao
-    Portal->>Odoo: Push Receipt: ngày + SL dự kiến
+    Vendor->>Portal: Ký xác nhận DO trên Portal
+    Portal->>Portal: Tạo PDF có chữ ký, khóa DO
+    Portal->>Vendor: Tải PDF (in 2 bản)
 
-    Note over Vendor,Team: ── Phase 3: Physical Delivery ──
-    Portal->>Kho: Gửi DO (2 bản)
-    Vendor->>Kho: Giao hàng kèm 2 tờ DO
-    Kho->>Vendor: Ký xác nhận — mỗi bên 1 tờ
+    Note over Vendor,Team: ── Phase 3: Physical Delivery — Cửa hàng ──
+    Vendor->>Kho: Cầm 2 tờ DO (PDF) ra cửa hàng giao hàng
+    Kho->>Vendor: Ký physically 2 tờ DO — mỗi bên 1 tờ
+    Kho->>Odoo: Xác nhận trên Odoo
 
     Note over Vendor,Team: ── Phase 4: Portal Receipt Confirmation ──
     Vendor->>Portal: Mở Receipt (Ready), nhập qty_done
@@ -164,7 +156,7 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Ready : PO confirmed,\nDO locked after cutoff
+    [*] --> Ready : PO confirmed,\nDO signed by vendor
 
     Ready --> Signed : Vendor nhập qty_done\nvà ký tên
 
@@ -205,4 +197,3 @@ stateDiagram-v2
 | RFQ | Request for Quotation |
 | PO | Purchase Order |
 | Receipt | Phiếu nhập kho Odoo |
-| Cutoff | 23:00 đêm trước ngày giao — DO bị khóa sau mốc này |
