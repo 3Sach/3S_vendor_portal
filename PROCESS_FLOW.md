@@ -15,6 +15,7 @@ flowchart LR
     S2([📧 Gửi RFQ\ncho nhà cung cấp]):::store
 
     V1([✅ Nhà cung cấp\nxác nhận PO\ntrên Portal]):::vendor
+    P_DO([🔄 Odoo tự tạo DO\ndựa trên PO đã confirmed]):::portal
     V2([📦 Điền số lượng\nvà ngày giao\ntrên Portal]):::vendor
     V3([✍️ Ký xác nhận DO\ntrên Portal\nvà tải PDF]):::vendor
     V4([🚚 Cầm 2 tờ DO\nra cửa hàng]):::vendor
@@ -25,7 +26,7 @@ flowchart LR
     I2([✔️ Cửa hàng\nxác nhận\ntrên Odoo]):::store
 
     S1 --> S2 --> V1
-    V1 --> V2
+    V1 --> P_DO --> V2
     V2 --> V3
     V3 --> P1
     P1 --> V4
@@ -43,7 +44,7 @@ flowchart LR
 ```mermaid
 flowchart TD
     subgraph ONBOARD["Vendor Onboarding"]
-        A1(["New vendor added in Odoo\nsupplier_rank > 0"]) --> A2[Sync job runs every 6h]
+        A1(["New vendor added in Odoo\nis_vendor = True + email set"]) --> A2[Sync job runs every 6h]
         A2 --> A3{Has email?}
         A3 -- No --> A4[Skip & log for manual follow-up]
         A3 -- Yes --> A5["Create portal account\ninactive, no password"]
@@ -66,7 +67,7 @@ flowchart TD
     end
 
     subgraph DO["Delivery Order — Vendor Portal"]
-        C1["1 DO auto-created per confirmed PO\nRef number follows PO"] --> C2["Vendor edits DO on portal\nSingle delivery date + quantities\nQty must not exceed ordered qty\nDelivery qty always in base UoM"]
+        C1["Odoo auto-creates 1 DO (stock.picking)\nwhen PO is confirmed\nPortal reads and syncs it"] --> C2["Vendor edits DO on portal\nSingle delivery date + quantities\nQty must not exceed ordered qty\nDelivery qty always in base UoM"]
         C2 --> C3["Vendor clicks Sign DO\nDraws digital signature\nOptional comment"]
         C3 --> C4["DO status: Signed\nLocked — no further edits"]
         C4 --> C5["Vendor downloads signed DO PDF\nPrints 2 copies"]
@@ -192,7 +193,8 @@ sequenceDiagram
 |---|---|---|---|
 | New vendor account created (sync job) | Vendor | Vietnamese (default) | Vendor ID (integer) + set-password link (24h expiry) |
 | Password reset requested | Vendor | Vendor's preferred language | Reset link (24h expiry) |
-| RFQ rejected by vendor | PO creator (internal) | English | RFQ reference, vendor name |
+| RFQ rejected by vendor | PO creator (store staff) | Vietnamese | RFQ reference, vendor name |
+| PO auto-cancelled (7 days past Expected Arrival) | Vendor + PO creator | Vendor's pref lang / Vietnamese | PO auto-cancelled — no response within 7 days |
 | DO signed by vendor | — | — | No email sent on signing |
 | Receipt confirmed by store (qty matches) | Vendor | Vendor's preferred language | Confirmation with PO number, receipt reference |
 | Receipt confirmed by store (qty differs) | Vendor | Vendor's preferred language | Alert with difference details |
@@ -211,13 +213,13 @@ Portal admins share the same UI layout as vendors with additional menu items: **
 | View all vendor accounts (status, last login, receipt counts) | `GET /api/admin/vendors` |
 | Drill into a specific vendor's POs and receipts | `GET /api/admin/vendors/{partner_id}` |
 | Deactivate / reactivate a vendor account | `PATCH /api/admin/vendors/{partner_id}/deactivate|reactivate` |
-| Download any vendor's signed PDF | `GET /api/admin/receipts/{picking_id}/pdf` |
-| Unlock a signed DO (vendor can then re-edit and re-sign) | `POST /api/admin/receipts/{picking_id}/unlock` |
+| Download any vendor's signed PDF | `GET /api/admin/delivery-orders/{do_id}/pdf` |
+| Unlock a signed DO (vendor can then re-edit and re-sign) | `POST /api/admin/delivery-orders/{do_id}/unlock` |
 | Manually trigger the Odoo partner sync job | `POST /api/admin/sync` |
 | View sync status (last run, vendors synced, skipped) | `GET /api/admin/sync/status` |
 | View paginated audit log | `GET /api/admin/audit-log` |
 
-**Audit log** records four action types: `login`, `qty_update`, `sign`, `unlock`. It is append-only — never editable or deletable through the portal.
+**Audit log** records action types: `login`, `po_confirm`, `po_reject`, `po_auto_cancel`, `do_update`, `do_sign`, `do_unlock`, `rn_confirm_sign`, `receipt_validated`. It is append-only — never editable or deletable through the portal.
 
 **Profile edits are not possible in the portal.** All vendor profile changes (name, email, phone, company) must be made in Odoo and will sync on the next 6-hour cycle. Admin cannot modify vendor profiles directly.
 
@@ -226,8 +228,6 @@ Portal admins share the same UI layout as vendors with additional menu items: **
 ## PO Status Mapping: Portal vs Odoo
 
 Portal and Odoo maintain **different status labels**. Odoo's base behaviour is never modified.
-
-> **Implementation scope (README v4):** The portal API returns only POs in `purchase` (Confirmed) and `done` (Done) states for the vendor's main browsing view. The `sent` (Waiting/RFQ) state is surfaced separately for the confirmation/rejection action — vendors must act before a PO moves to `purchase`.
 
 | Portal PO Status | Odoo State | Trigger | Vendor can do |
 |---|---|---|---|
@@ -241,7 +241,7 @@ Portal and Odoo maintain **different status labels**. Odoo's base behaviour is n
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Draft : PO confirmed,\n1 DO auto-created
+    [*] --> Draft : PO confirmed,\nOdoo auto-creates DO
 
     Draft --> Signed : Vendor edits qty + date,\nsigns digitally
 

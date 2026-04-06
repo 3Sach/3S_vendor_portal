@@ -5,6 +5,94 @@
 
 ---
 
+## Technical Stack Decisions
+
+| Concern | Decision |
+|---|---|
+| Frontend stack | React + Vite |
+| Backend stack | FastAPI (Python) |
+| Database | PostgreSQL (portal-owned) |
+| Cache / rate limiting | Redis |
+| Deployment | Docker Compose on a separate VM, Nginx reverse proxy |
+| SSL / TLS | Handled at infrastructure level (load balancer / reverse proxy) |
+| HTTP client (frontend) | Native `fetch` API — no axios or third-party HTTP lib |
+| Signature capture | `signature_pad.js` → PNG sent to backend |
+| Audit logging (DB) | Actions logged: `login`, `po_confirm`, `po_reject`, `po_auto_cancel`, `do_update`, `do_sign`, `do_unlock`, `rn_confirm_sign`, `receipt_validated` |
+| Admin role | Separate `admin_users` table, password seeded from `ADMIN_INITIAL_PASSWORD` env variable on first startup |
+
+---
+
+## Odoo ↔ Portal Sync — Open Questions (⚠️ Pending IT Confirmation)
+
+> Tập hợp các điểm kỹ thuật cần xác nhận với IT team trước khi implement.
+
+| # | Chủ đề | Mô tả hiện tại | Cần xác nhận |
+|---|---|---|---|
+| 1 | **Order Deadline / auto-cancel** | PO auto-cancel sau 7 ngày past Expected Arrival nếu vendor không action | Odoo 16 CE có trường Expected Arrival trên `purchase.order` không? Trường nào? |
+| 2 | **Vendor profile sync** | Sync job chạy mỗi 6h, đọc `res.partner` từ Odoo | Tần suất sync? Real-time hay batch? |
+| 3 | **PO data sync** | Portal đọc PO trực tiếp từ Odoo qua XML-RPC on-demand | Cache strategy? Có cần sync PO về Portal DB không? |
+| 4 | **PO confirmation → Odoo** | Portal gọi `button_confirm` trên `purchase.order` | Có cần thêm validation nào phía Odoo không? |
+| 5 | **PO rejection → Odoo** | Portal gọi `button_cancel` trên `purchase.order` | `button_cancel` có hoạt động ở state `sent` trên Odoo 16 CE không? |
+| 6 | **DO data** | DO auto-created trên Portal khi PO confirmed | Portal tự tạo DO hay Odoo tạo picking rồi Portal đọc? |
+| 7 | **DO sign → Odoo** | Sau khi vendor ký, delivery date + set quantities push về Odoo Receipt | Push bằng XML-RPC write vào `stock.picking` / `stock.move.line`? Trường nào? |
+| 8 | **Receipt validation (Odoo → Portal)** | Store confirms Receipt → Portal cập nhật DO status = Done | Webhook, polling, hay nightly sync? Cần Odoo module không? |
+| 9 | **Vendor deactivation** | Vendor deactivated trên Odoo → sync set `is_active = FALSE` | Cần deactivate ngay hay chờ sync cycle? |
+
+**Cơ chế sync (draft):**
+- **Portal → Odoo:** XML-RPC write — PO confirm/reject, DO push (delivery date + quantities)
+- **Odoo → Portal (profiles):** Scheduled job mỗi 6h
+- **Odoo → Portal (receipt validated):** TBD — webhook vs polling vs nightly batch
+- **PDF fetch:** HTTP session riêng, không dùng XML-RPC
+
+---
+
+## Data Flow Summary
+
+### Authentication flow
+1. Vendor enters their **Vendor ID** (integer — `res.partner.id` from Odoo) and password on the login page
+2. Backend looks up `vendor_users` by `odoo_partner_id`
+3. Password verified with bcrypt — same error message for all failure cases
+4. On success, issues a JWT access token (30 min) and refresh token (7 days)
+5. All subsequent requests carry the access token in the `Authorization` header
+6. Expired access tokens are silently refreshed using the refresh token
+7. On refresh failure, vendor is redirected to the login page
+
+### Profile sync flow
+1. Scheduled job runs every 6 hours, reads `res.partner` where `is_vendor = True` and `email` is set
+2. **New partner:** creates `vendor_users` row (no password, inactive) linked by `odoo_partner_id`. Generates 24h invite token, sends welcome email via AWS SES containing the **Vendor ID** and set-password link
+3. **Existing partner:** syncs profile fields only (`full_name`, `company_name`, `phone`, `tax_id`) — `hashed_password` is **never overwritten** by sync
+4. **Partner deactivated in Odoo:** sets `is_active = FALSE` — vendor can no longer log in
+5. Partners with no email in Odoo are skipped and logged for manual follow-up (email is needed to deliver the welcome email)
+
+### Delivery Order (DO) flow
+1. When a vendor confirms a PO, Odoo auto-creates 1 DO (stock.picking). The portal reads it via XML-RPC and makes it available for editing
+2. Vendor edits the DO: sets delivery date and quantities per product line (qty must be <= ordered qty from PO)
+3. Saves are incremental — vendor can save and come back multiple times while the DO is in Draft state
+4. When ready, vendor clicks "Sign DO", draws their digital signature, and confirms
+5. Backend verifies ownership, stores the signature PNG, generates the signed DO PDF (WeasyPrint), and marks the DO as **locked** in the portal database
+6. Backend pushes delivery date + set quantities to the corresponding Odoo Receipt via XML-RPC (these become pre-filled quantities in the Receipt, not yet `qty_done`)
+7. Vendor can print the signed DO PDF multiple times — this is the document they bring to the store
+8. The DO is now read-only in the portal — only a portal admin can unlock it (vendor is notified by email on unlock)
+
+### Receipt confirmation flow (store-side, reflected on portal)
+1. Vendor delivers goods to the store with the printed DO (2 paper copies, both parties sign, each keeps 1)
+2. Store reviews the Receipt in Odoo — can adjust the pre-filled set quantities before confirming
+3. Store confirms the Receipt in Odoo — `qty_done` is finalized
+4. Portal receives notification that the Receipt is validated (sync mechanism TBD — webhook vs polling, pending team confirmation)
+5. DO status on portal becomes **Done** — the final received amounts are shown on the DO
+6. Portal sends an email to the vendor confirming receipt, alerting if any quantities differ between DO and receipt
+7. Vendor can see both their DO quantities and the store's final received quantities on the DO detail page
+8. Vendor can export the data as PDF or CSV for invoicing and reconciliation
+
+### Sync mechanism (Odoo → Portal)
+- **TBD — pending team confirmation.** Options under consideration:
+  - (a) Webhook: Odoo sends notification to portal on receipt validation (requires lightweight Odoo module)
+  - (b) Polling: portal periodically checks Odoo for state changes
+  - (c) Nightly batch sync at 23:00
+- Portal → Odoo communication (PO confirm/reject, DO push) is always real-time via XML-RPC
+
+---
+
 ## Phase 0 — Project Setup & Infrastructure
 **Effort: 0.5–1 day**
 
@@ -82,7 +170,7 @@ vendor-portal/
 ### Odoo models in scope
 | Model | Purpose | Key fields |
 |---|---|---|
-| `res.partner` | Vendor profile sync | `id`, `name`, `email` (initial account creation only), `company_name`, `phone`, `mobile`, `vat` (Tax ID), `supplier_rank` |
+| `res.partner` | Vendor profile sync | `id`, `name`, `email` (required — sync skips partners with no email), `company_name`, `phone`, `mobile`, `vat` (Tax ID), `is_vendor` (filter: only sync where `is_vendor = True` and `email` is set) |
 | `purchase.order` | PO list, detail, confirmation, rejection | `name`, `partner_id`, `state`, `date_order`, `date_planned` (Expected Arrival), `amount_total`, `order_line`, `picking_ids`, `user_id` (PO creator for email) — `button_confirm` or `button_cancel` called on vendor action |
 | `purchase.order.line` | PO line items | `product_id`, `name`, `product_qty`, `qty_received`, `price_unit`, `product_uom` (UoM for this line) |
 | `product.product` | Product info for DO PDF | `id`, `name`, `barcode` |
