@@ -22,26 +22,27 @@
 
 ---
 
-## Odoo ↔ Portal Sync — Open Questions (⚠️ Pending IT Confirmation)
+## Odoo ↔ Portal Sync — Confirmed Decisions
 
-> Tập hợp các điểm kỹ thuật cần xác nhận với IT team trước khi implement.
+> Tập hợp các điểm kỹ thuật đã được xác nhận với IT team.
 
 | # | Chủ đề | Mô tả hiện tại | Cần xác nhận |
 |---|---|---|---|
-| 1 | **Order Deadline / auto-cancel** | PO auto-cancel sau 7 ngày past Expected Arrival nếu vendor không action | Odoo 16 CE có trường Expected Arrival trên `purchase.order` không? Trường nào? |
-| 2 | **Vendor profile sync** | Sync job chạy mỗi 6h, đọc `res.partner` từ Odoo | Tần suất sync? Real-time hay batch? |
-| 3 | **PO data sync** | Portal đọc PO trực tiếp từ Odoo qua XML-RPC on-demand | Cache strategy? Có cần sync PO về Portal DB không? |
-| 4 | **PO confirmation → Odoo** | Portal gọi `button_confirm` trên `purchase.order` | Có cần thêm validation nào phía Odoo không? |
-| 5 | **PO rejection → Odoo** | Portal gọi `button_cancel` trên `purchase.order` | `button_cancel` có hoạt động ở state `sent` trên Odoo 16 CE không? |
-| 6 | **DO data** | DO auto-created trên Portal khi PO confirmed | Portal tự tạo DO hay Odoo tạo picking rồi Portal đọc? |
-| 7 | **DO sign → Odoo** | Sau khi vendor ký, delivery date + set quantities push về Odoo Receipt | Push bằng XML-RPC write vào `stock.picking` / `stock.move.line`? Trường nào? |
-| 8 | **Receipt validation (Odoo → Portal)** | Store confirms Receipt → Portal cập nhật DO status = Done | Webhook, polling, hay nightly sync? Cần Odoo module không? |
-| 9 | **Vendor deactivation** | Vendor deactivated trên Odoo → sync set `is_active = FALSE` | Cần deactivate ngay hay chờ sync cycle? |
+| 1 | **Order Deadline / auto-cancel** | PO auto-cancel sau 7 ngày past Expected Arrival nếu vendor không action | ✅ Trường `date_planned` trên `purchase.order` |
+| 2 | **Vendor profile sync** | Sync job chạy mỗi 6h, đọc `res.partner` từ Odoo | ✅ Batch job mỗi 6h — đã documented |
+| 3 | **PO data sync** | Portal đọc PO trực tiếp từ Odoo qua XML-RPC on-demand | ✅ Có cache, refresh mỗi 10 phút |
+| 4 | **PO confirmation → Odoo** | Portal gọi `button_confirm` trên `purchase.order` | ✅ Không có validation thêm phía Odoo |
+| 5 | **PO rejection → Odoo** | Portal gọi `button_cancel` trên `purchase.order` | ✅ `button_cancel` hoạt động ở state `sent` trên Odoo 16 CE |
+| 6 | **DO data** | Odoo tự tạo DO (`stock.picking`) khi PO confirmed | ✅ Odoo tạo — portal đọc qua XML-RPC, không tự tạo |
+| 7 | **DO sign → Odoo** | Sau khi vendor ký, delivery date + set quantities push về Odoo Receipt | ✅ `scheduled_date` trên `stock.picking` + `quantity_done` trên `stock.move.line` |
+| 8 | **Receipt validation (Odoo → Portal)** | Store confirms Receipt → Portal cập nhật DO status = Done | ✅ Nightly batch sync (23:00) — không cần Odoo module |
+| 9 | **Vendor deactivation** | Vendor deactivated trên Odoo → sync set `is_active = FALSE` | ✅ Chờ sync cycle 6h — không critical |
 
 **Cơ chế sync (draft):**
 - **Portal → Odoo:** XML-RPC write — PO confirm/reject, DO push (delivery date + quantities)
-- **Odoo → Portal (profiles):** Scheduled job mỗi 6h
-- **Odoo → Portal (receipt validated):** TBD — webhook vs polling vs nightly batch
+- **Odoo → Portal (profiles):** Scheduled batch job mỗi 6h
+- **Odoo → Portal (PO data):** XML-RPC on-demand, cached, refresh mỗi 10 phút
+- **Odoo → Portal (receipt validated):** Nightly batch sync lúc 23:00 — không cần Odoo module
 - **PDF fetch:** HTTP session riêng, không dùng XML-RPC
 
 ---
@@ -70,7 +71,7 @@
 3. Saves are incremental — vendor can save and come back multiple times while the DO is in Draft state
 4. When ready, vendor clicks "Sign DO", draws their digital signature, and confirms
 5. Backend verifies ownership, stores the signature PNG, generates the signed DO PDF (WeasyPrint), and marks the DO as **locked** in the portal database
-6. Backend pushes delivery date + set quantities to the corresponding Odoo Receipt via XML-RPC (these become pre-filled quantities in the Receipt, not yet `qty_done`)
+6. Backend pushes via XML-RPC: `scheduled_date` → `stock.picking`, `quantity_done` → `stock.move.line`
 7. Vendor can print the signed DO PDF multiple times — this is the document they bring to the store
 8. The DO is now read-only in the portal — only a portal admin can unlock it (vendor is notified by email on unlock)
 
@@ -85,11 +86,9 @@
 8. Vendor can export the data as PDF or CSV for invoicing and reconciliation
 
 ### Sync mechanism (Odoo → Portal)
-- **TBD — pending team confirmation.** Options under consideration:
-  - (a) Webhook: Odoo sends notification to portal on receipt validation (requires lightweight Odoo module)
-  - (b) Polling: portal periodically checks Odoo for state changes
-  - (c) Nightly batch sync at 23:00
-- Portal → Odoo communication (PO confirm/reject, DO push) is always real-time via XML-RPC
+- **Nightly batch sync lúc 23:00** — portal đọc tất cả Receipt đã được confirm trong ngày qua XML-RPC
+- Không cần Odoo module, chỉ cần quyền XML-RPC read trên `stock.picking`
+- Portal → Odoo communication (PO confirm/reject, DO push) là real-time via XML-RPC
 
 ---
 

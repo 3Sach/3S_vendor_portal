@@ -1,8 +1,8 @@
-# 3SACH Vendor Portal — Process Flow
+# 3SACH Vendor Portal — Luồng Quy Trình
 
 ---
 
-## Business Overview (Simple View)
+## Tổng Quan Nghiệp Vụ (Nhìn Đơn Giản)
 
 ```mermaid
 flowchart LR
@@ -35,330 +35,330 @@ flowchart LR
     I2 --> DONE([🎉 Hoàn tất]):::store
 ```
 
-> **Colours:** 🔵 Blue = Store | 🟢 Green = Vendor | 🟣 Purple = Portal System | 🟡 Yellow = Internal 3Sach
+> **Màu sắc:** 🔵 Xanh dương = Cửa hàng | 🟢 Xanh lá = Nhà cung cấp | 🟣 Tím = Hệ thống Portal | 🟡 Vàng = Nội bộ 3Sach
 
 ---
 
-## Full Purchase Workflow: RFQ -> PO Confirm -> DO -> Delivery -> Receipt
+## Toàn Bộ Quy Trình Mua Hàng: RFQ -> Xác Nhận PO -> DO -> Giao Hàng -> Biên Nhận
 
 ```mermaid
 flowchart TD
-    subgraph ONBOARD["Vendor Onboarding"]
-        A1(["New vendor added in Odoo\nis_vendor = True + email set"]) --> A2[Sync job runs every 6h]
-        A2 --> A3{Has email?}
-        A3 -- No --> A4[Skip & log for manual follow-up]
-        A3 -- Yes --> A5["Create portal account\ninactive, no password"]
-        A5 --> A6["Send Welcome Email via AWS SES\nVendor ID + set-password link 24h"]
-        A6 --> A7["Vendor sets password\nAccount becomes active"]
+    subgraph ONBOARD["Onboarding Nhà Cung Cấp"]
+        A1(["Nhà cung cấp mới được thêm vào Odoo\nis_vendor = True + có email"]) --> A2[Job đồng bộ chạy mỗi 6h]
+        A2 --> A3{Có email?}
+        A3 -- Không --> A4[Bỏ qua & ghi log để xử lý thủ công]
+        A3 -- Có --> A5["Tạo tài khoản portal\nchưa kích hoạt, chưa có mật khẩu"]
+        A5 --> A6["Gửi Email Chào Mừng qua AWS SES\nVendor ID + link đặt mật khẩu 24h"]
+        A6 --> A7["Nhà cung cấp đặt mật khẩu\nTài khoản được kích hoạt"]
     end
 
-    subgraph RFQ_PO["RFQ to PO Confirmation / Rejection"]
-        B1(["Store creates RFQ in Odoo"]) --> B2["Sent RFQ\nEmail sent to vendor"]
-        B2 --> B3{"Vendor action\non Portal?"}
-        B3 -- Confirm --> B4["Vendor clicks Confirm PO\non Vendor Portal"]
-        B4 --> B5["Portal calls button_confirm\non purchase.order via XML-RPC"]
-        B5 --> B6["PO Confirmed in Odoo\nstate: sent to purchase\nNo email sent"]
-        B3 -- Reject --> B7["Vendor clicks Reject\non Vendor Portal"]
-        B7 --> B8["Portal calls button_cancel\non purchase.order via XML-RPC"]
-        B8 --> B9["RFQ Cancelled in Odoo\nstate: sent to cancel"]
-        B9 --> B10["Email to PO creator\nRFQ rejected by vendor"]
-        B3 -- No action / 7 days past Expected Arrival --> B3X["Portal auto-cancels\nbutton_cancel via XML-RPC"]
-        B3X --> B3Y["Email to Vendor + PO creator\nPO auto-cancelled — no response"]
+    subgraph RFQ_PO["RFQ đến Xác Nhận / Từ Chối PO"]
+        B1(["Cửa hàng tạo RFQ trong Odoo"]) --> B2["Sent RFQ\nEmail gửi cho nhà cung cấp"]
+        B2 --> B3{"Hành động của nhà cung cấp\ntrên Portal?"}
+        B3 -- Xác nhận --> B4["Nhà cung cấp nhấp Xác nhận PO\ntrên Vendor Portal"]
+        B4 --> B5["Portal gọi button_confirm\ntrên purchase.order qua XML-RPC"]
+        B5 --> B6["PO được xác nhận trong Odoo\nstate: sent → purchase\nKhông gửi email"]
+        B3 -- Từ chối --> B7["Nhà cung cấp nhấp Từ chối\ntrên Vendor Portal"]
+        B7 --> B8["Portal gọi button_cancel\ntrên purchase.order qua XML-RPC"]
+        B8 --> B9["RFQ bị hủy trong Odoo\nstate: sent → cancel"]
+        B9 --> B10["Email đến PO creator\nRFQ bị từ chối bởi nhà cung cấp"]
+        B3 -- Không hành động / 7 ngày sau Expected Arrival --> B3X["Portal tự động hủy\nbutton_cancel qua XML-RPC"]
+        B3X --> B3Y["Email đến Nhà cung cấp + PO creator\nPO tự động hủy — không phản hồi"]
     end
 
     subgraph DO["Delivery Order — Vendor Portal"]
-        C1["Odoo auto-creates 1 DO (stock.picking)\nwhen PO is confirmed\nPortal reads and syncs it"] --> C2["Vendor edits DO on portal\nSingle delivery date + quantities\nQty must not exceed ordered qty\nDelivery qty always in base UoM"]
-        C2 --> C3["Vendor clicks Sign DO\nDraws digital signature\nOptional comment"]
-        C3 --> C4["DO status: Signed\nLocked — no further edits"]
-        C4 --> C5["Vendor downloads signed DO PDF\nPrints 2 copies"]
+        C1["Odoo tự động tạo 1 DO (stock.picking)\nkhi PO được xác nhận\nPortal đọc và đồng bộ"] --> C2["Nhà cung cấp chỉnh sửa DO trên portal\nNgày giao hàng duy nhất + số lượng\nQty không được vượt qty đặt hàng\nSố lượng giao luôn tính theo UoM gốc"]
+        C2 --> C3["Nhà cung cấp nhấp Ký DO\nVẽ chữ ký điện tử\nGhi chú tuỳ chọn"]
+        C3 --> C4["Trạng thái DO: Signed\nBị khoá — không thể chỉnh sửa thêm"]
+        C4 --> C5["Nhà cung cấp tải xuống DO PDF đã ký\nIn 2 bản"]
     end
 
-    subgraph DELIVERY["Physical Delivery — Store"]
-        D1["Vendor brings 2 printed DO copies\nto store with goods"] --> D2["Store receives goods\nChecks quantities"]
-        D2 --> D3["Both parties sign physically\n2 paper copies of DO\nEach keeps 1 copy"]
-        D3 --> D4["Store confirms on Odoo"]
+    subgraph DELIVERY["Giao Hàng Thực Tế — Cửa Hàng"]
+        D1["Nhà cung cấp mang 2 bản DO in\nđến cửa hàng cùng với hàng hoá"] --> D2["Cửa hàng nhận hàng\nKiểm tra số lượng"]
+        D2 --> D3["Cả hai bên ký tay\n2 bản giấy DO\nMỗi bên giữ 1 bản"]
+        D3 --> D4["Cửa hàng xác nhận trên Odoo"]
     end
 
-    subgraph STORE_CONFIRM["Receipt Confirmation — Odoo"]
-        E1["Store reviews Receipt in Odoo\nCan adjust set quantities"] --> E2["Store confirms Receipt\nqty_done is finalized"]
-        E2 --> E3["Portal notified\nDO status becomes Done"]
-        E3 --> E4["Email to vendor\nReceipt confirmed\nAlerts if qty differs"]
+    subgraph STORE_CONFIRM["Xác Nhận Biên Nhận — Odoo"]
+        E1["Cửa hàng xem xét Receipt trong Odoo\nCó thể điều chỉnh số lượng đã nhập"] --> E2["Cửa hàng xác nhận Receipt\nqty_done được finalize"]
+        E2 --> E3["Portal được thông báo\nTrạng thái DO chuyển sang Done"]
+        E3 --> E4["Email đến nhà cung cấp\nXác nhận biên nhận\nCảnh báo nếu qty chênh lệch"]
     end
 
-    subgraph UNLOCK["Exception: Unlock DO"]
-        G1(["Vendor entered wrong quantities"]) --> G2["Portal Admin unlocks DO\nDO status returns to Draft"]
-        G2 --> G3[Email notification sent to vendor]
-        G3 --> G4[Vendor updates DO and re-signs]
+    subgraph UNLOCK["Ngoại Lệ: Mở Khoá DO"]
+        G1(["Nhà cung cấp nhập sai số lượng"]) --> G2["Portal Admin mở khoá DO\nTrạng thái DO trở về Draft"]
+        G2 --> G3[Email thông báo gửi đến nhà cung cấp]
+        G3 --> G4[Nhà cung cấp cập nhật DO và ký lại]
     end
 
-    subgraph RETURNS["Returns Flow"]
-        R1(["Store creates RPO in Odoo\nEmail sent to vendor"]) --> R2["RPO appears on portal\nVendor sees return items"]
-        R2 --> R3["Vendor sets pickup date\nClicks Confirm & Sign\nCannot reject or change qty"]
-        R3 --> R4["RN signed and locked\nVendor prints RN PDF"]
-        R4 --> R5["Vendor goes to store\nto collect returned goods\nBoth sign 2 paper copies"]
-        R5 --> R6["Store confirms return\nreceipt in Odoo"]
-        R6 --> R7[RN status: Done]
+    subgraph RETURNS["Quy Trình Trả Hàng"]
+        R1(["Cửa hàng tạo RPO trong Odoo\nEmail gửi cho nhà cung cấp"]) --> R2["RPO xuất hiện trên portal\nNhà cung cấp thấy các mặt hàng trả"]
+        R2 --> R3["Nhà cung cấp đặt ngày lấy hàng\nNhấp Xác nhận & Ký\nKhông thể từ chối hoặc thay đổi qty"]
+        R3 --> R4["RN được ký và khoá\nNhà cung cấp in RN PDF"]
+        R4 --> R5["Nhà cung cấp đến cửa hàng\nđể lấy hàng trả về\nCả hai ký 2 bản giấy"]
+        R5 --> R6["Cửa hàng xác nhận biên nhận trả hàng\ntrong Odoo"]
+        R6 --> R7[Trạng thái RN: Done]
     end
 
-    %% Connect major phases
+    %% Kết nối các giai đoạn chính
     A7 --> B2
     B6 --> C1
     C5 --> D1
     D4 --> E1
-    C4 -.->|"Signed / Locked state"| G1
-    G4 -.->|"Re-enters signing"| C3
+    C4 -.->|"Trạng thái Signed / Khoá"| G1
+    G4 -.->|"Quay lại bước ký"| C3
 ```
 
 ---
 
-## Swimlane View (4 Actors)
+## Sơ Đồ Swimlane (4 Bên Tham Gia)
 
 ```mermaid
 sequenceDiagram
-    actor Vendor
+    actor Vendor as Nhà cung cấp
     participant Portal as Vendor Portal
     participant Odoo as Odoo (XML-RPC)
-    participant Store as Store (Odoo only)
+    participant Store as Cửa hàng (chỉ Odoo)
 
-    Note over Vendor,Store: ── Phase 1: RFQ & PO Confirmation ──
-    Odoo->>Vendor: Sent RFQ email
-    Vendor->>Portal: Confirm or Reject PO
-    Portal->>Odoo: button_confirm / button_cancel on purchase.order
-    Odoo-->>Portal: PO state updated
-    Odoo-->>Portal: DO auto-created (if confirmed)
+    Note over Vendor,Store: ── Giai đoạn 1: RFQ & Xác Nhận PO ──
+    Odoo->>Vendor: Email Sent RFQ
+    Vendor->>Portal: Xác nhận hoặc Từ chối PO
+    Portal->>Odoo: button_confirm / button_cancel trên purchase.order
+    Odoo-->>Portal: Trạng thái PO được cập nhật
+    Odoo-->>Portal: DO được tạo tự động (nếu xác nhận)
 
-    Note over Vendor,Store: ── Phase 2: Delivery Order — Sign & Print ──
-    Portal->>Vendor: DO available — editable (Draft)
-    Vendor->>Portal: Edit DO: delivery date + quantities (≤ ordered qty)
-    Vendor->>Portal: Sign DO (digital signature + optional comment)
-    Portal->>Portal: Generate signed PDF, lock DO
-    Portal->>Vendor: Download PDF, print 2 copies
+    Note over Vendor,Store: ── Giai đoạn 2: Delivery Order — Ký & In ──
+    Portal->>Vendor: DO sẵn sàng — có thể chỉnh sửa (Draft)
+    Vendor->>Portal: Chỉnh sửa DO: ngày giao hàng + số lượng (≤ qty đặt hàng)
+    Vendor->>Portal: Ký DO (chữ ký điện tử + ghi chú tuỳ chọn)
+    Portal->>Portal: Tạo PDF có chữ ký, khoá DO
+    Portal->>Vendor: Tải xuống PDF, in 2 bản
 
-    Note over Vendor,Store: ── Phase 3: Physical Delivery — Store ──
-    Vendor->>Store: Bring 2 DO copies + goods to store
-    Store->>Vendor: Both sign physically — each keeps 1 copy
-    Store->>Odoo: Confirm on Odoo
+    Note over Vendor,Store: ── Giai đoạn 3: Giao Hàng Thực Tế — Cửa Hàng ──
+    Vendor->>Store: Mang 2 bản DO + hàng hoá đến cửa hàng
+    Store->>Vendor: Cả hai ký tay — mỗi bên giữ 1 bản
+    Store->>Odoo: Xác nhận trên Odoo
 
-    Note over Vendor,Store: ── Phase 4: Store Receipt Confirmation (Odoo) ──
-    Store->>Odoo: Review Receipt, adjust quantities if needed
-    Store->>Odoo: Confirm Receipt (qty_done finalized)
-    Odoo->>Portal: Receipt validated (sync mechanism TBD)
-    Portal->>Portal: DO status -> Done, final received qty stored
-    Portal->>Vendor: Email: receipt confirmed (alerts if any qty differs)
+    Note over Vendor,Store: ── Giai đoạn 4: Xác Nhận Biên Nhận (Odoo) ──
+    Store->>Odoo: Xem xét Receipt, điều chỉnh số lượng nếu cần
+    Store->>Odoo: Xác nhận Receipt (qty_done được finalize)
+    Odoo->>Portal: Receipt được validated (cơ chế sync TBD)
+    Portal->>Portal: Trạng thái DO -> Done, lưu qty thực tế nhận được
+    Portal->>Vendor: Email: xác nhận biên nhận (cảnh báo nếu qty chênh lệch)
 
-    Note over Vendor,Store: ── Phase 5: Returns ──
-    Store->>Odoo: Create RPO
-    Odoo->>Vendor: Email: return order notification
-    Vendor->>Portal: View RPO, set pickup date
-    Vendor->>Portal: Confirm & Sign Return Note (one step)
-    Portal->>Vendor: RN PDF available for printing
-    Vendor->>Store: Collect returned goods with printed RN (2 copies)
-    Store->>Odoo: Confirm return receipt
-    Odoo->>Portal: RN status -> Done
+    Note over Vendor,Store: ── Giai đoạn 5: Trả Hàng ──
+    Store->>Odoo: Tạo RPO
+    Odoo->>Vendor: Email: thông báo đơn trả hàng
+    Vendor->>Portal: Xem RPO, đặt ngày lấy hàng
+    Vendor->>Portal: Xác nhận & Ký Return Note (một bước)
+    Portal->>Vendor: RN PDF sẵn sàng để in
+    Vendor->>Store: Lấy hàng trả về với RN in ra (2 bản)
+    Store->>Odoo: Xác nhận biên nhận trả hàng
+    Odoo->>Portal: Trạng thái RN -> Done
 
-    Note over Vendor,Store: ── Phase 6: Export ──
-    Vendor->>Portal: Export PDF (individual or summary) or CSV
+    Note over Vendor,Store: ── Giai đoạn 6: Xuất Dữ Liệu ──
+    Vendor->>Portal: Xuất PDF (riêng lẻ hoặc tổng hợp) hoặc CSV
 
-    Note over Vendor,Store: ── Exception: Unlock DO ──
-    Portal->>Vendor: Admin unlocks DO (status -> Draft) + email notification
-    Vendor->>Portal: Re-edit DO quantities and re-sign
+    Note over Vendor,Store: ── Ngoại Lệ: Mở Khoá DO ──
+    Portal->>Vendor: Admin mở khoá DO (trạng thái -> Draft) + email thông báo
+    Vendor->>Portal: Chỉnh sửa lại số lượng DO và ký lại
 ```
 
 ---
 
-## Auth Flow
+## Luồng Xác Thực
 
-### Vendor Authentication
-1. Vendor enters their **Vendor ID** (integer — the `res.partner.id` from Odoo) and password on the login page
-2. Backend looks up `vendor_users` by `odoo_partner_id`; bcrypt verification always runs (even for unknown IDs — timing-safe)
-3. Same generic error message for wrong ID or wrong password — never reveals whether the ID exists
-4. On success: issues a **JWT access token** (30 min) and **refresh token** (7 days), both carrying `role: vendor`
-5. All subsequent requests carry the access token in the `Authorization` header
-6. On 401: frontend silently calls `/api/auth/refresh` → retries once with new token
-7. On refresh failure: clears storage → redirects to `/login`
+### Xác Thực Nhà Cung Cấp
+1. Nhà cung cấp nhập **Vendor ID** (số nguyên — `res.partner.id` từ Odoo) và mật khẩu trên trang đăng nhập
+2. Backend tra cứu `vendor_users` theo `odoo_partner_id`; xác minh bcrypt luôn chạy (kể cả khi ID không tồn tại — an toàn về mặt timing)
+3. Cùng một thông báo lỗi chung cho cả sai ID lẫn sai mật khẩu — không tiết lộ ID có tồn tại hay không
+4. Thành công: cấp phát **JWT access token** (30 phút) và **refresh token** (7 ngày), cả hai đều mang `role: vendor`
+5. Tất cả các request tiếp theo mang access token trong header `Authorization`
+6. Khi nhận 401: frontend gọi thầm `/api/auth/refresh` → thử lại một lần với token mới
+7. Khi refresh thất bại: xóa storage → chuyển hướng về `/login`
 
-### Admin Authentication
-- Admin logs in at `/admin/login` with a **username** (not a Vendor ID) and password
-- JWT carries `role: admin` — admin tokens cannot access vendor routes and vice versa
-- First admin account is seeded from `ADMIN_INITIAL_PASSWORD` env variable on startup
+### Xác Thực Admin
+- Admin đăng nhập tại `/admin/login` với **username** (không phải Vendor ID) và mật khẩu
+- JWT mang `role: admin` — token admin không thể truy cập route vendor và ngược lại
+- Tài khoản admin đầu tiên được seed từ biến môi trường `ADMIN_INITIAL_PASSWORD` khi khởi động
 
 ### Token Blacklist
-- On logout, refresh token is added to Redis with TTL matching remaining lifetime
+- Khi đăng xuất, refresh token được thêm vào Redis với TTL khớp với thời gian còn lại của token
 
 ---
 
-## Email Notifications
+## Thông Báo Email
 
-| Event | Recipient | Language | Content |
+| Sự kiện | Người nhận | Ngôn ngữ | Nội dung |
 |---|---|---|---|
-| New vendor account created (sync job) | Vendor | Vietnamese (default) | Vendor ID (integer) + set-password link (24h expiry) |
-| Password reset requested | Vendor | Vendor's preferred language | Reset link (24h expiry) |
-| RFQ rejected by vendor | PO creator (store staff) | Vietnamese | RFQ reference, vendor name |
-| PO auto-cancelled (7 days past Expected Arrival) | Vendor + PO creator | Vendor's pref lang / Vietnamese | PO auto-cancelled — no response within 7 days |
-| DO signed by vendor | — | — | No email sent on signing |
-| Receipt confirmed by store (qty matches) | Vendor | Vendor's preferred language | Confirmation with PO number, receipt reference |
-| Receipt confirmed by store (qty differs) | Vendor | Vendor's preferred language | Alert with difference details |
-| DO unlocked by admin | Vendor | Vendor's preferred language | Notification that DO is available to re-edit |
+| Tài khoản vendor mới được tạo (job đồng bộ) | Nhà cung cấp | Tiếng Việt (mặc định) | Vendor ID (số nguyên) + link đặt mật khẩu (hết hạn sau 24h) |
+| Yêu cầu đặt lại mật khẩu | Nhà cung cấp | Ngôn ngữ ưa thích của nhà cung cấp | Link đặt lại (hết hạn sau 24h) |
+| RFQ bị từ chối bởi nhà cung cấp | PO creator (nhân viên cửa hàng) | Tiếng Việt | Mã RFQ, tên nhà cung cấp |
+| PO tự động hủy (7 ngày sau Expected Arrival) | Nhà cung cấp + PO creator | Ngôn ngữ ưa thích / Tiếng Việt | PO tự động hủy — không phản hồi trong 7 ngày |
+| DO được ký bởi nhà cung cấp | — | — | Không gửi email khi ký |
+| Biên nhận được cửa hàng xác nhận (qty khớp) | Nhà cung cấp | Ngôn ngữ ưa thích của nhà cung cấp | Xác nhận kèm số PO, mã biên nhận |
+| Biên nhận được cửa hàng xác nhận (qty chênh lệch) | Nhà cung cấp | Ngôn ngữ ưa thích của nhà cung cấp | Cảnh báo kèm chi tiết chênh lệch |
+| DO được admin mở khoá | Nhà cung cấp | Ngôn ngữ ưa thích của nhà cung cấp | Thông báo DO đã sẵn sàng để chỉnh sửa lại |
 
-> All vendor-facing emails follow `vendor_users.preferred_language` (`vi` or `en`). Internal emails are always in English. Email delivery is via **AWS SES** with a dedicated IAM user (`ses:SendEmail` only).
+> Tất cả email gửi đến nhà cung cấp tuân theo `vendor_users.preferred_language` (`vi` hoặc `en`). Email nội bộ luôn bằng tiếng Việt. Gửi email qua **AWS SES** với IAM user chuyên dụng (chỉ có quyền `ses:SendEmail`).
 
 ---
 
-## Admin Capabilities
+## Quyền Hạn Admin
 
-Portal admins share the same UI layout as vendors with additional menu items: **Vendors**, **Sync Status**, **Audit Log**.
+Portal admin dùng chung bố cục giao diện với nhà cung cấp và có thêm các mục menu: **Nhà cung cấp**, **Trạng thái Sync**, **Audit Log**.
 
-| Capability | Endpoint |
+| Quyền hạn | Endpoint |
 |---|---|
-| View all vendor accounts (status, last login, receipt counts) | `GET /api/admin/vendors` |
-| Drill into a specific vendor's POs and receipts | `GET /api/admin/vendors/{partner_id}` |
-| Deactivate / reactivate a vendor account | `PATCH /api/admin/vendors/{partner_id}/deactivate|reactivate` |
-| Download any vendor's signed PDF | `GET /api/admin/delivery-orders/{do_id}/pdf` |
-| Unlock a signed DO (vendor can then re-edit and re-sign) | `POST /api/admin/delivery-orders/{do_id}/unlock` |
-| Manually trigger the Odoo partner sync job | `POST /api/admin/sync` |
-| View sync status (last run, vendors synced, skipped) | `GET /api/admin/sync/status` |
-| View paginated audit log | `GET /api/admin/audit-log` |
+| Xem toàn bộ tài khoản nhà cung cấp (trạng thái, lần đăng nhập cuối, số biên nhận) | `GET /api/admin/vendors` |
+| Xem chi tiết PO và biên nhận của một nhà cung cấp cụ thể | `GET /api/admin/vendors/{partner_id}` |
+| Kích hoạt / vô hiệu hoá tài khoản nhà cung cấp | `PATCH /api/admin/vendors/{partner_id}/deactivate|reactivate` |
+| Tải xuống PDF đã ký của bất kỳ nhà cung cấp nào | `GET /api/admin/delivery-orders/{do_id}/pdf` |
+| Mở khoá DO đã ký (nhà cung cấp có thể chỉnh sửa và ký lại) | `POST /api/admin/delivery-orders/{do_id}/unlock` |
+| Kích hoạt thủ công job đồng bộ partner Odoo | `POST /api/admin/sync` |
+| Xem trạng thái sync (lần chạy cuối, số vendor đã sync, số bị bỏ qua) | `GET /api/admin/sync/status` |
+| Xem audit log có phân trang | `GET /api/admin/audit-log` |
 
-**Audit log** records action types: `login`, `po_confirm`, `po_reject`, `po_auto_cancel`, `do_update`, `do_sign`, `do_unlock`, `rn_confirm_sign`, `receipt_validated`. It is append-only — never editable or deletable through the portal.
+**Audit log** ghi lại các loại hành động: `login`, `po_confirm`, `po_reject`, `po_auto_cancel`, `do_update`, `do_sign`, `do_unlock`, `rn_confirm_sign`, `receipt_validated`. Chỉ được ghi thêm — không thể chỉnh sửa hoặc xoá qua portal.
 
-**Profile edits are not possible in the portal.** All vendor profile changes (name, email, phone, company) must be made in Odoo and will sync on the next 6-hour cycle. Admin cannot modify vendor profiles directly.
+**Không thể chỉnh sửa hồ sơ trong portal.** Mọi thay đổi hồ sơ nhà cung cấp (tên, email, điện thoại, công ty) phải thực hiện trong Odoo và sẽ được đồng bộ trong chu kỳ 6 giờ tiếp theo. Admin không thể chỉnh sửa hồ sơ nhà cung cấp trực tiếp.
 
 ---
 
-## PO Status Mapping: Portal vs Odoo
+## Ánh Xạ Trạng Thái PO: Portal vs Odoo
 
-Portal and Odoo maintain **different status labels**. Odoo's base behaviour is never modified.
+Portal và Odoo duy trì **nhãn trạng thái khác nhau**. Hành vi gốc của Odoo không bao giờ bị thay đổi.
 
-| Portal PO Status | Odoo State | Trigger | Vendor can do |
+| Trạng thái PO trên Portal | Trạng thái Odoo | Điều kiện kích hoạt | Nhà cung cấp có thể làm |
 |---|---|---|---|
-| **Waiting** | `sent` | Store sends RFQ | Confirm or Reject |
-| **Confirmed** | `purchase` | Vendor confirms PO on portal | View DO, export data |
-| **Cancelled** | `cancel` | Vendor rejects, store cancels, or auto-cancel (7 days past Expected Arrival) | Read-only |
+| **Waiting** | `sent` | Cửa hàng gửi RFQ | Xác nhận hoặc Từ chối |
+| **Confirmed** | `purchase` | Nhà cung cấp xác nhận PO trên portal | Xem DO, xuất dữ liệu |
+| **Cancelled** | `cancel` | Nhà cung cấp từ chối, cửa hàng hủy, hoặc tự động hủy (7 ngày sau Expected Arrival) | Chỉ đọc |
 
 ---
 
-## DO State Machine
+## State Machine của DO
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Draft : PO confirmed,\nOdoo auto-creates DO
+    [*] --> Draft : PO được xác nhận,\nOdoo tự động tạo DO
 
-    Draft --> Signed : Vendor edits qty + date,\nsigns digitally
+    Draft --> Signed : Nhà cung cấp chỉnh sửa qty + ngày,\nký điện tử
 
-    Signed --> Draft : Portal Admin unlocks\n(vendor notified by email)
+    Signed --> Draft : Portal Admin mở khoá\n(nhà cung cấp được thông báo qua email)
 
-    Signed --> Done : Store confirms receipt\nin Odoo
+    Signed --> Done : Cửa hàng xác nhận biên nhận\ntrong Odoo
 
     Done --> [*]
 
-    Draft --> Cancelled : PO cancelled\n(before receipt confirmation)
+    Draft --> Cancelled : PO bị hủy\n(trước khi xác nhận biên nhận)
 
     Cancelled --> [*]
 
     note right of Draft
-        Vendor: can edit single delivery date + quantities
-        Quantities must be <= ordered qty
-        UoM inherited from PO — cannot be changed
-        Portal: editable
+        Nhà cung cấp: có thể chỉnh sửa ngày giao hàng duy nhất + số lượng
+        Số lượng phải <= qty đặt hàng
+        UoM kế thừa từ PO — không thể thay đổi
+        Portal: có thể chỉnh sửa
     end note
 
     note right of Signed
-        Vendor: read-only, can print DO PDF
-        Portal: locked, pushed to Odoo
-        Odoo Receipt: set quantities populated
-        No email sent
+        Nhà cung cấp: chỉ đọc, có thể in DO PDF
+        Portal: bị khoá, đã đẩy lên Odoo
+        Odoo Receipt: số lượng đã điền
+        Không gửi email
     end note
 
     note right of Done
-        Vendor: read-only, sees final received qty
-        Can export PDF/CSV
-        Email sent if qty differs
+        Nhà cung cấp: chỉ đọc, thấy qty thực tế nhận được
+        Có thể xuất PDF/CSV
+        Gửi email nếu qty chênh lệch
     end note
 
     note right of Cancelled
-        Vendor: read-only
-        Only possible if Receipt not yet confirmed
+        Nhà cung cấp: chỉ đọc
+        Chỉ có thể xảy ra nếu Receipt chưa được xác nhận
     end note
 ```
 
 ---
 
-## RN (Return Note) State Machine
+## State Machine của RN (Return Note)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Draft : RPO created by store,\nRN auto-created
+    [*] --> Draft : RPO được cửa hàng tạo,\nRN được tạo tự động
 
-    Draft --> Signed : Vendor sets pickup date,\nConfirm & Sign (one step)
+    Draft --> Signed : Nhà cung cấp đặt ngày lấy hàng,\nXác nhận & Ký (một bước)
 
-    Signed --> Done : Store confirms return\nreceipt in Odoo
+    Signed --> Done : Cửa hàng xác nhận biên nhận\ntrả hàng trong Odoo
 
     Done --> [*]
 
     note right of Draft
-        Vendor: can set pickup date only
-        Cannot change quantities
-        Cannot reject
+        Nhà cung cấp: chỉ có thể đặt ngày lấy hàng
+        Không thể thay đổi số lượng
+        Không thể từ chối
     end note
 
     note right of Signed
-        Vendor: read-only, can print RN PDF
-        Portal: locked
+        Nhà cung cấp: chỉ đọc, có thể in RN PDF
+        Portal: bị khoá
     end note
 
     note right of Done
-        Return completed
-        Can export PDF/CSV
+        Trả hàng hoàn tất
+        Có thể xuất PDF/CSV
     end note
 ```
 
 ---
 
-## Returns: RPO & Return Note (Bien Ban Tra Hang)
+## Trả Hàng: RPO & Return Note (Biên Bản Trả Hàng)
 
-| Concept | Purchase Flow | Returns Flow |
+| Khái niệm | Quy trình mua hàng | Quy trình trả hàng |
 |---|---|---|
-| Order | PO (Purchase Order) | RPO (Return Purchase Order) |
-| Delivery document | DO (Delivery Order) | RN (Return Note / Bien Ban Tra Hang) |
-| Vendor can edit | Delivery date + quantities (not UoM) | Pickup date only (no qty or UoM change) |
-| Vendor can reject | Yes | No |
-| Signature | Required (DO) | Required (RN) |
-| Printable PDF | Yes (DO PDF) | Yes (RN PDF, same format) |
-| Physical exchange | Vendor delivers to store | Vendor collects from store |
+| Đơn hàng | PO (Purchase Order) | RPO (Return Purchase Order) |
+| Chứng từ giao nhận | DO (Delivery Order) | RN (Return Note / Biên Bản Trả Hàng) |
+| Nhà cung cấp có thể chỉnh sửa | Ngày giao hàng + số lượng (không phải UoM) | Chỉ ngày lấy hàng (không thay đổi qty hay UoM) |
+| Nhà cung cấp có thể từ chối | Có | Không |
+| Chữ ký | Bắt buộc (DO) | Bắt buộc (RN) |
+| PDF có thể in | Có (DO PDF) | Có (RN PDF, cùng định dạng) |
+| Trao đổi vật lý | Nhà cung cấp giao hàng đến cửa hàng | Nhà cung cấp lấy hàng từ cửa hàng |
 
 ---
 
-## Data Retention
+## Lưu Trữ Dữ Liệu
 
-- Vendors can view PO data for **24 months** from PO creation date
-- Applies to **all PO statuses** equally: Waiting, Confirmed, Cancelled
-- Applies to **all DO statuses**: Draft, Signed, Done, Cancelled
-- Applies to returns (RPO/RN) equally
-- POs older than 24 months are **permanently deleted** from the portal database
-- A scheduled cleanup job runs periodically to enforce this rule
-
----
-
-## Data Export
-
-- Vendors can export data as **PDF** or **CSV**
-- PDF: individual document or summary report of multiple records
-- CSV: bulk data for vendor to edit and import into their systems
-- UI supports selecting single or multiple records for export
-- Date range filter available
-- Includes both regular POs/DOs and returns (RPO/RN)
+- Nhà cung cấp có thể xem dữ liệu PO trong **24 tháng** kể từ ngày tạo PO
+- Áp dụng cho **tất cả trạng thái PO**: Waiting, Confirmed, Cancelled
+- Áp dụng cho **tất cả trạng thái DO**: Draft, Signed, Done, Cancelled
+- Áp dụng cho trả hàng (RPO/RN) như nhau
+- PO cũ hơn 24 tháng bị **xoá vĩnh viễn** khỏi cơ sở dữ liệu portal
+- Một scheduled cleanup job chạy định kỳ để thực thi quy tắc này
 
 ---
 
-**Glossary**
+## Xuất Dữ Liệu
 
-| Term | Meaning |
+- Nhà cung cấp có thể xuất dữ liệu dưới dạng **PDF** hoặc **CSV**
+- PDF: chứng từ riêng lẻ hoặc báo cáo tổng hợp nhiều bản ghi
+- CSV: dữ liệu hàng loạt để nhà cung cấp chỉnh sửa và nhập vào hệ thống của họ
+- Giao diện hỗ trợ chọn một hoặc nhiều bản ghi để xuất
+- Có bộ lọc theo khoảng ngày
+- Bao gồm cả PO/DO thông thường lẫn trả hàng (RPO/RN)
+
+---
+
+**Bảng Thuật Ngữ**
+
+| Thuật ngữ | Ý nghĩa |
 |---|---|
 | NCC | Nhà cung cấp (Vendor) |
-| DO | Delivery Order — vendor's planned delivery document, edited and signed on portal |
-| RN | Return Note / Bien Ban Tra Hang — return equivalent of DO, signed by vendor |
-| Receipt | Phiếu nhập kho — Odoo's incoming shipment record, confirmed by store |
-| RPO | Return Purchase Order — return equivalent of PO, created by store |
+| DO | Delivery Order — chứng từ giao hàng theo kế hoạch của nhà cung cấp, được chỉnh sửa và ký trên portal |
+| RN | Return Note / Biên Bản Trả Hàng — tương đương DO cho quy trình trả hàng, được nhà cung cấp ký |
+| Receipt | Phiếu nhập kho — bản ghi hàng nhập trong Odoo, được xác nhận bởi cửa hàng |
+| RPO | Return Purchase Order — tương đương PO cho quy trình trả hàng, do cửa hàng tạo |
 | SL | Số lượng (Quantity) |
 | RFQ | Request for Quotation |
 | PO | Purchase Order |
