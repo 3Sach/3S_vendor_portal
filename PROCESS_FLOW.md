@@ -14,9 +14,10 @@ flowchart LR
     S1([🏪 Cửa hàng\ntạo RFQ\ntrên Odoo]):::store
     S2([📧 Gửi RFQ\ncho nhà cung cấp]):::store
 
+    V0([📅 Nhà cung cấp\nxác nhận ngày giao\ntrên Portal]):::vendor
     V1([✅ Nhà cung cấp\nxác nhận PO\ntrên Portal]):::vendor
-    P_DO([🔄 Odoo tự tạo DO\ndựa trên PO đã confirmed]):::portal
-    V2([📦 Điền số lượng\nghi chú, ngày giao\ntrên Portal]):::vendor
+    P_DO([🔄 Odoo tự tạo DO\nngày giao = ngày đã xác nhận]):::portal
+    V2([📦 Điền số lượng\nvà ghi chú\ntrên Portal]):::vendor
 
     P_CUT{{23:00 đêm trước\nngày giao\nDO tự động Locked}}:::portal
 
@@ -26,7 +27,8 @@ flowchart LR
     I1([🏪 Cửa hàng ký\nphysically 2 tờ DO\nmỗi bên giữ 1 tờ]):::store
     I2([✔️ Cửa hàng\nxác nhận Receipt\ntrên Odoo]):::store
 
-    S1 --> S2 --> V1
+    S1 --> S2 --> V0
+    V0 --> V1
     V1 --> P_DO --> V2
     V2 --> P_CUT
     P_CUT --> V3
@@ -54,23 +56,26 @@ flowchart TD
     end
 
     subgraph RFQ_PO["RFQ đến Xác Nhận / Từ Chối PO"]
-        B1(["Cửa hàng tạo RFQ trong Odoo"]) --> B2["Sent RFQ\nEmail gửi cho nhà cung cấp"]
-        B2 --> B3{"Hành động của nhà cung cấp\ntrên Portal?"}
-        B3 -- Xác nhận --> B4["Nhà cung cấp nhấp Xác nhận PO\ntrên Vendor Portal"]
+        B1(["Cửa hàng tạo RFQ trong Odoo\nNhập ngày mong muốn giao hàng (date_planned)"]) --> B2["Sent RFQ\nEmail gửi cho nhà cung cấp"]
+        B2 --> B2A["NCC xem RFQ trên Portal\nĐiều chỉnh ngày dự kiến giao hàng\n(không vượt quá 7 ngày so với date_planned)"]
+        B2A --> B2B["NCC nhấp 'Xác Nhận Ngày Giao Hàng'\nPortal push vendor_date_planned\nvào purchase.order trên Odoo"]
+        B2B --> B3{"Hành động tiếp theo\ncủa nhà cung cấp?"}
+        B3 -- Xác nhận --> B4["NCC nhấp 'Xác Nhận Đơn Đặt Hàng'"]
         B4 --> B5["Portal gọi button_confirm\ntrên purchase.order qua XML-RPC"]
         B5 --> B6["PO được xác nhận trong Odoo\nstate: sent → purchase\nKhông gửi email"]
-        B3 -- Từ chối --> B7["Nhà cung cấp nhấp Từ chối\ntrên Vendor Portal"]
-        B7 --> B8["Portal gọi button_cancel\ntrên purchase.order qua XML-RPC"]
+        B3 -- Từ chối --> B7["NCC nhấp 'Từ Chối Đơn Đặt Hàng'\nPopup: điền lý do từ chối"]
+        B7 --> B7A["NCC điền lý do và nhấp 'Xác nhận'\nPortal log lý do từ chối"]
+        B7A --> B8["Portal gọi button_cancel\ntrên purchase.order qua XML-RPC"]
         B8 --> B9["RFQ bị hủy trong Odoo\nstate: sent → cancel"]
-        B9 --> B10["Email đến PO creator\nRFQ bị từ chối bởi nhà cung cấp"]
-        B3 -- Không hành động / 7 ngày sau Expected Arrival --> B3X["Portal tự động hủy\nbutton_cancel qua XML-RPC"]
-        B3X --> B3Y["Email đến Nhà cung cấp + PO creator\nPO tự động hủy — không phản hồi"]
+        B9 --> B10["Email đến PO creator\nRFQ bị từ chối + lý do"]
+        B3 -- Không hành động / 7 ngày sau date_planned --> B3X["Portal tự động hủy\nbutton_cancel qua XML-RPC"]
+        B3X --> B3Y["Email đến NCC + PO creator\nPO tự động hủy — không phản hồi"]
     end
 
     subgraph DO["Delivery Order — Vendor Portal"]
-        C1["Odoo tự tạo 1 DO (stock.picking)\nkhi PO confirmed\nNgày giao mặc định = ngày mong muốn từ PO"] --> C2["Nhà cung cấp sửa DO trên portal:\n- Ngày giao thực tế (→ scheduled_date)\n- Số lượng giao (≤ qty đặt)\n- Ghi chú inline trên từng dòng SP"]
+        C1["Odoo tự tạo 1 DO (stock.picking)\nkhi PO confirmed\nNgày giao = vendor_date_planned từ PO"] --> C2["NCC sửa DO trên portal:\n- Số lượng giao (≤ qty đặt, đúng decimal UoM)\n- Ghi chú inline trên từng dòng SP\n(Ngày giao không chỉnh được — lấy từ PO)"]
         C2 --> C3["Nhà cung cấp in DO PDF\n(in trực tiếp, không cần ký)\nCó thể in nhiều lần"]
-        C3 --> C4["23:00 đêm trước ngày giao trên DO\nDO tự động → Locked\nPush qty lên Odoo Receipt"]
+        C3 --> C4["23:00 đêm trước ngày giao\n(= vendor_date_planned từ PO)\nDO tự động → Locked\nPush qty lên Odoo Receipt"]
         C4 --> C5["Nhà cung cấp in DO PDF phiên bản cuối\nIn 2 bản"]
     end
 
@@ -120,18 +125,20 @@ sequenceDiagram
     participant Odoo as Odoo (XML-RPC)
     participant Store as Cửa hàng (chỉ Odoo)
 
-    Note over Vendor,Store: ── Giai đoạn 1: RFQ & Xác Nhận PO ──
-    Odoo->>Vendor: Email Sent RFQ
-    Vendor->>Portal: Xác nhận hoặc Từ chối PO
+    Note over Vendor,Store: ── Giai đoạn 1: RFQ — Xác Nhận Ngày & Xác Nhận PO ──
+    Odoo->>Vendor: Email Sent RFQ (kèm date_planned — ngày mong muốn giao)
+    Vendor->>Portal: Điều chỉnh ngày dự kiến giao (≤ 7 ngày so với date_planned)
+    Vendor->>Portal: Nhấp "Xác Nhận Ngày Giao Hàng"
+    Portal->>Odoo: Push vendor_date_planned vào purchase.order
+    Vendor->>Portal: Nhấp "Xác Nhận Đơn Đặt Hàng" (hoặc "Từ Chối" + lý do)
     Portal->>Odoo: button_confirm / button_cancel trên purchase.order
-    Odoo-->>Portal: Trạng thái PO được cập nhật
     Odoo-->>Portal: DO được tạo tự động (nếu xác nhận)
 
-    Note over Vendor,Store: ── Giai đoạn 2: Delivery Order — Sửa & In ──
-    Portal->>Vendor: DO sẵn sàng — có thể chỉnh sửa (Draft)
-    Vendor->>Portal: Chỉnh sửa DO: số lượng + ghi chú inline trên từng dòng SP
-    Vendor->>Portal: In DO PDF (in trực tiếp, không cần ký, có thể in nhiều lần)
-    Note over Portal: 23:00 cutoff → DO tự động Locked, push qty lên Odoo
+    Note over Vendor,Store: ── Giai đoạn 2: Delivery Order — Sửa qty & In ──
+    Portal->>Vendor: DO sẵn sàng — ngày giao cố định từ PO
+    Vendor->>Portal: Chỉnh qty (đúng decimal UoM) + ghi chú inline
+    Vendor->>Portal: In DO PDF (in trực tiếp, có thể in nhiều lần)
+    Note over Portal: 23:00 cutoff đêm trước ngày giao → DO Locked, push qty lên Odoo
     Portal->>Vendor: In DO PDF phiên bản cuối (2 bản)
 
     Note over Vendor,Store: ── Giai đoạn 3: Giao Hàng Thực Tế ──
@@ -240,7 +247,7 @@ Portal và Odoo duy trì **nhãn trạng thái khác nhau**. Hành vi gốc củ
 stateDiagram-v2
     [*] --> Draft : PO được xác nhận,\nOdoo tự động tạo DO
 
-    Draft --> Locked : 23:00 đêm trước ngày giao trên DO\nPush scheduled_date + quantity_done lên Odoo
+    Draft --> Locked : 23:00 đêm trước ngày giao\n(= vendor_date_planned từ PO)\nPush quantity_done lên Odoo
 
     Locked --> Draft : Portal Admin mở khoá\n(nhà cung cấp được thông báo qua email)
 
@@ -255,18 +262,17 @@ stateDiagram-v2
     Canceled --> [*]
 
     note right of Draft
-        Nhà cung cấp: sửa qty + ghi chú inline, in PDF — tự do
-        In = tạo PDF on-the-fly (không khoá, không push)
-        Có thể sửa/in nhiều lần nhiều phiên bản
-        Qty phải <= qty đặt hàng, UoM không đổi
+        NCC sửa qty + ghi chú inline, in PDF — tự do
+        Ngày giao cố định (= vendor_date_planned từ PO)
+        Qty phải <= qty đặt, đúng decimal UoM
+        (kg → 0.1, units → số nguyên)
+        In = tạo PDF on-the-fly (không khoá)
     end note
 
     note right of Locked
-        23:00 cutoff đêm trước ngày giao trên DO
-        Ngày giao mặc định = ngày mong muốn từ PO
-        NCC có thể đổi → cutoff dời theo
-        Tự động khoá + push Odoo
-        Nhà cung cấp: chỉ đọc, in PDF phiên bản cuối
+        23:00 đêm trước vendor_date_planned
+        Tự động khoá + push qty lên Odoo
+        NCC: chỉ đọc, in PDF phiên bản cuối
         Odoo Receipt: quantity_done đã pre-fill
     end note
 
@@ -322,7 +328,7 @@ stateDiagram-v2
 |---|---|---|
 | Đơn hàng | PO (Purchase Order) | RPO (Return Purchase Order) |
 | Chứng từ giao nhận | DO (Delivery Order) | RN (Return Note / Biên Bản Trả Hàng) |
-| Nhà cung cấp có thể chỉnh sửa | Ngày giao + số lượng + ghi chú inline | Chỉ ngày nhận hàng (không thay đổi qty hay UoM) |
+| Nhà cung cấp có thể chỉnh sửa | Số lượng (đúng decimal UoM) + ghi chú inline. Ngày giao cố định từ PO | Chỉ ngày nhận hàng (không thay đổi qty hay UoM) |
 | Nhà cung cấp cần xác nhận | Có (bấm "Xác Nhận" PO) | Không (không cần bấm xác nhận RPO) |
 | Chữ ký điện tử | Không — chỉ in PDF | Không — chỉ in PDF |
 | PDF có thể in | Có (DO PDF, in nhiều lần) | Có (RN PDF, cùng định dạng) |
