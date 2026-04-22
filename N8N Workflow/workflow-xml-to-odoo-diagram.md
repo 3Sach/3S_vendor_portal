@@ -31,15 +31,15 @@ flowchart TD
     End([Hoàn tất])
 
     LogNoPartner[(LOG: no_partner<br/>NCC chưa có trên Odoo)]
-    StopNoPO[DỪNG: no_po<br/>hoá đơn nháp]
-    StopMismatch[DỪNG: amount_mismatch]
+    LogNoPO[(LOG: no_po<br/>hoá đơn nháp, xử lý thủ công)]
+    LogMismatch[(LOG: amount_mismatch<br/>tiền Odoo ≠ XML)]
 
     Start --> B1 --> B2
     B2 -- Không thấy NCC --> LogNoPartner
     B2 -- Thấy NCC --> B3
-    B3 -- Không thấy PO --> StopNoPO
+    B3 -- Không thấy PO --> LogNoPO
     B3 -- Thấy PO --> B4
-    B4 -- Tiền không khớp --> StopMismatch
+    B4 -- Tiền không khớp --> LogMismatch
     B4 -- Đã posted --> B5
     B5 --> End
 
@@ -55,7 +55,7 @@ flowchart TD
     class B3 b3
     class B4 b4
     class B5 b5
-    class LogNoPartner,StopNoPO,StopMismatch logError
+    class LogNoPartner,LogNoPO,LogMismatch logError
 ```
 
 ---
@@ -63,7 +63,7 @@ flowchart TD
 ## Block ① Trích xuất dữ liệu XML
 
 ```mermaid
-flowchart LR
+flowchart TD
     Trigger([Trigger lịch 23:00]) --> MatBao[Gọi API MatBao<br/>JSON bán cấu trúc<br/>ky_hieu, so_hoa_don,<br/>mst_ncc, tong_tien,<br/>invoice_lines]
     MatBao --> Regex[Dò Regex PO<br/>POxxxxxx trong XML]
     Regex --> Check{Tìm thấy PO?}
@@ -84,7 +84,7 @@ flowchart LR
 ## Block ② Kiểm tra Nhà cung cấp
 
 ```mermaid
-flowchart LR
+flowchart TD
     In[mst_ncc từ XML] --> Search[Odoo: tìm res.partner<br/>WHERE vat = mst_ncc]
     Search --> Found{Tìm thấy?}
     Found -- Có --> OK[partner_id → Block ③]
@@ -102,7 +102,7 @@ flowchart LR
 ## Block ③ Kiểm tra Đơn đặt hàng
 
 ```mermaid
-flowchart LR
+flowchart TD
     In[partner_id + po_number] --> HasPO{has_po?}
     HasPO -- Có --> ByNum[Tìm purchase.order<br/>WHERE name = po_number<br/>AND partner_id = X<br/>AND invoice_status != 'no']
     HasPO -- Không --> ByAmt[Dự phòng: Tìm<br/>WHERE partner_id = X<br/>AND net_received_subtotal ≈ tong_tien<br/>AND effective_date ≈ ngay_lap]
@@ -127,14 +127,14 @@ flowchart TD
 
     FoundPO -- Không --> PathB[Path B: Không PO]
     PathB --> CreateDraft[Tạo account.move<br/>move_type=in_invoice, state=draft]
-    CreateDraft --> StopB[DỪNG: no_po]
+    CreateDraft --> LogB[(LOG: no_po)]
 
     FoundPO -- Có --> PathA[Path A: Có PO]
     PathA --> HasBill{PO đã có Hoá đơn?}
 
     HasBill -- Có --> GetState[Lấy trạng thái Hoá đơn]
     GetState --> Posted{state = posted?}
-    Posted -- Có --> Skip[BỎ QUA: đã posted]
+    Posted -- Có --> LogSkip[(LOG: posted_ok<br/>đã posted, bỏ qua)]
     Posted -- Không --> Update[Luồng cập nhật]
 
     HasBill -- Không --> Create[action_create_invoice] --> Reload[Reload PO → invoice_ids]
@@ -143,9 +143,12 @@ flowchart TD
     Update --> UM[Cập nhật account.move:<br/>invoice_date, ref,<br/>payment_reference]
     UM --> Tax[Tìm + Loop dòng thuế<br/>Cập nhật account.invoice.tax]
     Tax --> Amt{amount_total ≈ tong_tien<br/>±1000đ?}
-    Amt -- Không --> Mismatch[DỪNG: amount_mismatch]
+    Amt -- Không --> LogMismatch[(LOG: amount_mismatch)]
     Amt -- Có --> Post[action_post → state=posted]
     Post --> Next[→ Block ⑤ Upload file]
+
+    classDef logError fill:#dc2626,stroke:#991b1b,stroke-width:3px,color:#fff
+    class LogB,LogSkip,LogMismatch logError
 ```
 
 **Model:** `account.move` + `account.invoice.tax` | **Đầu ra:** `bill_id` đã `posted`
@@ -157,13 +160,25 @@ flowchart TD
 ```mermaid
 flowchart TD
     In[bill_id đã posted từ Block ④]
-    In --> Fetch[Tải file từ MatBao<br/>XML + PDF binary]
+    In --> CheckExist[Tìm ir.attachment<br/>WHERE res_model=account.move<br/>AND res_id=bill_id<br/>AND name IN xml_name, pdf_name]
+
+    CheckExist --> Dup{Đã upload?}
+    Dup -- Có file trùng tên --> LogSkip[(LOG: attachment_exists<br/>bỏ qua upload)]
+    Dup -- Không trùng --> Fetch[Tải file từ MatBao<br/>XML + PDF binary]
+
     Fetch --> Enc[Code: Encode file → base64]
     Enc --> AX[HTTP: POST ir.attachment<br/>res_model=account.move<br/>res_id=bill_id<br/>datas=base64 XML]
     AX --> AP[HTTP: POST ir.attachment<br/>datas=base64 PDF]
+
+    classDef logError fill:#dc2626,stroke:#991b1b,stroke-width:3px,color:#fff
+    class LogSkip logError
 ```
 
 **Model:** `ir.attachment` (đa hình: `res_model=account.move`, `res_id=bill_id`)
+**Bước Check trùng:** search `ir.attachment` theo `res_id = bill_id` và `name IN (xml_name, pdf_name)`
+- Nếu đã tồn tại → log `attachment_exists`, bỏ qua upload (tránh duplicate khi workflow chạy lại)
+- Nếu chưa có → tải từ MatBao + upload như bình thường
+
 **Không còn di chuyển file trên SharePoint** — dữ liệu gốc nằm trên MatBao, workflow chỉ cần tải về + đính kèm vào Hoá đơn trên Odoo
 
 ---
